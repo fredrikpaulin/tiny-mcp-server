@@ -26,11 +26,17 @@ interface JsonRpcResponse {
 }
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
+type ResourceHandler = () => Promise<string>;
 
-const tools: Map<string, { schema: object; handler: ToolHandler }> = new Map();
+const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
+const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
 
-export function registerTool(name: string, schema: object, handler: ToolHandler) {
-  tools.set(name, { schema, handler });
+export function registerTool(name: string, description: string, schema: object, handler: ToolHandler) {
+  tools.set(name, { description, schema, handler });
+}
+
+export function registerResource(uri: string, name: string, description: string, mimeType: string, handler: ResourceHandler) {
+  resources.set(uri, { name, description, mimeType, handler });
 }
 
 async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -42,7 +48,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       id,
       result: {
         protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, resources: {} },
         serverInfo: { name: "st-mcp", version: "1.0.0" },
       },
     };
@@ -53,12 +59,50 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       jsonrpc: "2.0",
       id,
       result: {
-        tools: [...tools.entries()].map(([name, { schema }]) => ({
+        tools: [...tools.entries()].map(([name, { description, schema }]) => ({
           name,
+          description,
           inputSchema: schema,
         })),
       },
     };
+  }
+
+  if (method === "resources/list") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        resources: [...resources.entries()].map(([uri, { name, description, mimeType }]) => ({
+          uri,
+          name,
+          description,
+          mimeType,
+        })),
+      },
+    };
+  }
+
+  if (method === "resources/read") {
+    const { uri } = params as { uri: string };
+    const resource = resources.get(uri);
+
+    if (!resource) {
+      return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown resource: ${uri}` } };
+    }
+
+    try {
+      const text = await resource.handler();
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          contents: [{ uri, mimeType: resource.mimeType, text }],
+        },
+      };
+    } catch (e) {
+      return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
+    }
   }
 
   if (method === "tools/call") {
