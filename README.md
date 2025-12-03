@@ -11,7 +11,7 @@ bun install
 ## Usage
 
 ```ts
-import { registerTool, registerResource, serve } from "./mcp";
+import { registerTool, registerResource, registerResourceTemplate, serve } from "./mcp";
 
 // Register a tool
 registerTool(
@@ -36,7 +36,16 @@ registerResource(
   async () => JSON.stringify({ name: "my-server", version: "1.0.0" })
 );
 
-serve();
+// Register a resource template
+registerResourceTemplate(
+  "env://{name}",
+  "Environment Variable",
+  "Read an environment variable",
+  "text/plain",
+  async ({ name }) => process.env[name] || ""
+);
+
+serve({ name: "my-server", version: "1.0.0" });
 ```
 
 ## Run
@@ -62,6 +71,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | bun src/index.ts
 
 # Read a resource
 echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"info://server"}}' | bun src/index.ts
+# Read a resource template
+echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"env://HOME"}}' | bun src/index.ts
 ```
 
 ## API
@@ -89,9 +100,26 @@ Register a resource that can be read by MCP clients.
 | `mimeType` | `string` | Content type (e.g. `application/json`) |
 | `handler` | `() => Promise<string>` | Async function returning content |
 
-### `serve()`
+### `registerResourceTemplate(uriTemplate, name, description, mimeType, handler)`
+
+Register a dynamic resource with URI variables.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `uriTemplate` | `string` | URI pattern with `{var}` placeholders |
+| `name` | `string` | Human-readable name |
+| `description` | `string` | Human-readable description |
+| `mimeType` | `string` | Content type |
+| `handler` | `(vars) => Promise<string>` | Async function receiving extracted variables |
+
+### `serve(options?)`
 
 Start the MCP server on stdio.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `options.name` | `string` | Server name (default: `"mcp-server"`) |
+| `options.version` | `string` | Server version (default: `"1.0.0"`) |
 
 ## License
 

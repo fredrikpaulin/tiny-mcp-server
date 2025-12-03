@@ -27,9 +27,11 @@ interface JsonRpcResponse {
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 type ResourceHandler = () => Promise<string>;
+type ResourceTemplateHandler = (vars: Record<string, string>) => Promise<string>;
 
 const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
+const resourceTemplates: Map<string, { name: string; description: string; mimeType: string; pattern: RegExp; vars: string[]; handler: ResourceTemplateHandler }> = new Map();
 
 export function registerTool(name: string, description: string, schema: object, handler: ToolHandler) {
   tools.set(name, { description, schema, handler });
@@ -39,8 +41,25 @@ export function registerResource(uri: string, name: string, description: string,
   resources.set(uri, { name, description, mimeType, handler });
 }
 
+export function registerResourceTemplate(uriTemplate: string, name: string, description: string, mimeType: string, handler: ResourceTemplateHandler) {
+  const vars: string[] = [];
+  const pattern = new RegExp("^" + uriTemplate.replace(/\{([^}]+)\}/g, (_, v) => (vars.push(v), "(.+)")) + "$");
+  resourceTemplates.set(uriTemplate, { name, description, mimeType, pattern, vars, handler });
+}
+
+interface ServerOptions {
+  name?: string;
+  version?: string;
+}
+
+let serverInfo = { name: "mcp-server", version: "1.0.0" };
+
 async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   const { id, method, params } = req;
+
+  if (method === "ping") {
+    return { jsonrpc: "2.0", id, result: {} };
+  }
 
   if (method === "initialize") {
     return {
@@ -49,7 +68,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: "st-mcp", version: "1.0.0" },
+        serverInfo: { name: serverInfo.name, version: serverInfo.version },
       },
     };
   }
@@ -79,6 +98,12 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
           description,
           mimeType,
         })),
+        resourceTemplates: [...resourceTemplates.entries()].map(([uriTemplate, { name, description, mimeType }]) => ({
+          uriTemplate,
+          name,
+          description,
+          mimeType,
+        })),
       },
     };
   }
@@ -87,22 +112,38 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
     const { uri } = params as { uri: string };
     const resource = resources.get(uri);
 
-    if (!resource) {
-      return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown resource: ${uri}` } };
+    if (resource) {
+      try {
+        const text = await resource.handler();
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { contents: [{ uri, mimeType: resource.mimeType, text }] },
+        };
+      } catch (e) {
+        return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
+      }
     }
 
-    try {
-      const text = await resource.handler();
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          contents: [{ uri, mimeType: resource.mimeType, text }],
-        },
-      };
-    } catch (e) {
-      return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
+    for (const [, template] of resourceTemplates) {
+      const match = uri.match(template.pattern);
+      if (match) {
+        const vars: Record<string, string> = {};
+        template.vars.forEach((v, i) => (vars[v] = match[i + 1]));
+        try {
+          const text = await template.handler(vars);
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: { contents: [{ uri, mimeType: template.mimeType, text }] },
+          };
+        } catch (e) {
+          return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
+        }
+      }
     }
+
+    return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown resource: ${uri}` } };
   }
 
   if (method === "tools/call") {
@@ -136,7 +177,11 @@ function log(...args: unknown[]) {
   console.error("[mcp]", ...args);
 }
 
-export async function serve() {
+export async function serve(options: ServerOptions = {}) {
+  serverInfo = {
+    name: options.name || "mcp-server",
+    version: options.version || "1.0.0",
+  };
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -148,10 +193,14 @@ export async function serve() {
 
     for (const line of lines) {
       if (!line.trim()) continue;
-      const req = JSON.parse(line) as JsonRpcRequest;
-      const res = await handleRequest(req);
-      if (req.id !== undefined) {
-        console.log(JSON.stringify(res));
+      try {
+        const req = JSON.parse(line) as JsonRpcRequest;
+        const res = await handleRequest(req);
+        if (req.id !== undefined) {
+          console.log(JSON.stringify(res));
+        }
+      } catch (e) {
+        log("Parse error:", e);
       }
     }
   }

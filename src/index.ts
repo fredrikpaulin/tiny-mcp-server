@@ -1,4 +1,4 @@
-import { registerTool, registerResource, serve } from "./mcp";
+import { registerTool, registerResource, registerResourceTemplate, serve } from "./mcp";
 
 // Example tool: echo
 registerTool(
@@ -23,4 +23,13 @@ registerResource(
   async () => JSON.stringify({ name: "tiny-mcp-server", version: "0.0.1" })
 );
 
-serve();
+// Example resource template: environment variable
+registerResourceTemplate(
+  "env://{name}",
+  "Environment Variable",
+  "Read an environment variable",
+  "text/plain",
+  async ({ name }) => process.env[name] || ""
+);
+
+serve({ name: "tiny-mcp-server", version: "0.0.1" });
