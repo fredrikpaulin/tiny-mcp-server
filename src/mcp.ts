@@ -32,6 +32,8 @@ type ResourceTemplateHandler = (vars: Record<string, string>) => Promise<string>
 const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
 const resourceTemplates: Map<string, { name: string; description: string; mimeType: string; pattern: RegExp; vars: string[]; handler: ResourceTemplateHandler }> = new Map();
+const pendingRequests: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }> = new Map();
+let requestId = 0;
 
 export function registerTool(name: string, description: string, schema: object, handler: ToolHandler) {
   tools.set(name, { description, schema, handler });
@@ -67,7 +69,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       id,
       result: {
         protocolVersion: "2024-11-05",
-        capabilities: { tools: {}, resources: {} },
+        capabilities: { tools: {}, resources: {}, sampling: {} },
         serverInfo: { name: serverInfo.name, version: serverInfo.version },
       },
     };
@@ -177,6 +179,36 @@ function log(...args: unknown[]) {
   console.error("[mcp]", ...args);
 }
 
+function sendRequest(method: string, params: unknown): Promise<unknown> {
+  const id = ++requestId;
+  return new Promise((resolve, reject) => {
+    pendingRequests.set(id, { resolve, reject });
+    console.log(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+  });
+}
+
+export interface SampleMessage {
+  role: "user" | "assistant";
+  content: { type: "text"; text: string };
+}
+
+export interface SampleOptions {
+  messages: SampleMessage[];
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+}
+
+export async function sample(options: SampleOptions): Promise<string> {
+  const result = await sendRequest("sampling/createMessage", {
+    messages: options.messages,
+    maxTokens: options.maxTokens || 1000,
+    ...(options.temperature !== undefined && { temperature: options.temperature }),
+    ...(options.systemPrompt && { systemPrompt: options.systemPrompt }),
+  }) as { content: { type: string; text: string } };
+  return result.content.text;
+}
+
 export async function serve(options: ServerOptions = {}) {
   serverInfo = {
     name: options.name || "mcp-server",
@@ -194,7 +226,24 @@ export async function serve(options: ServerOptions = {}) {
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const req = JSON.parse(line) as JsonRpcRequest;
+        const msg = JSON.parse(line);
+
+        // Response to our outgoing request
+        if ("result" in msg || "error" in msg) {
+          const pending = pendingRequests.get(msg.id);
+          if (pending) {
+            pendingRequests.delete(msg.id);
+            if (msg.error) {
+              pending.reject(new Error(msg.error.message));
+            } else {
+              pending.resolve(msg.result);
+            }
+          }
+          continue;
+        }
+
+        // Incoming request
+        const req = msg as JsonRpcRequest;
         const res = await handleRequest(req);
         if (req.id !== undefined) {
           console.log(JSON.stringify(res));

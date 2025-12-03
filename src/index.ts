@@ -1,4 +1,4 @@
-import { registerTool, registerResource, registerResourceTemplate, serve } from "./mcp";
+import { registerTool, registerResource, registerResourceTemplate, sample, serve } from "./mcp";
 
 // Example tool: echo
 registerTool(
@@ -30,6 +30,26 @@ registerResourceTemplate(
   "Read an environment variable",
   "text/plain",
   async ({ name }) => process.env[name] || ""
+);
+
+// Example tool using sampling: summarize
+registerTool(
+  "summarize",
+  "Summarize text using the client's LLM",
+  {
+    type: "object",
+    properties: {
+      text: { type: "string", description: "Text to summarize" }
+    },
+    required: ["text"]
+  },
+  async ({ text }) => {
+    const summary = await sample({
+      messages: [{ role: "user", content: { type: "text", text: `Summarize this in one sentence:\n\n${text}` } }],
+      maxTokens: 200
+    });
+    return { summary };
+  }
 );
 
 serve({ name: "tiny-mcp-server", version: "0.0.1" });

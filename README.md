@@ -11,7 +11,7 @@ bun install
 ## Usage
 
 ```ts
-import { registerTool, registerResource, registerResourceTemplate, serve } from "./mcp";
+import { registerTool, registerResource, registerResourceTemplate, sample, serve } from "./mcp";
 
 // Register a tool
 registerTool(
@@ -43,6 +43,24 @@ registerResourceTemplate(
   "Read an environment variable",
   "text/plain",
   async ({ name }) => process.env[name] || ""
+);
+
+// Use sampling inside a tool
+registerTool(
+  "summarize",
+  "Summarize text using the client's LLM",
+  {
+    type: "object",
+    properties: { text: { type: "string" } },
+    required: ["text"]
+  },
+  async ({ text }) => {
+    const summary = await sample({
+      messages: [{ role: "user", content: { type: "text", text: `Summarize: ${text}` } }],
+      maxTokens: 200
+    });
+    return { summary };
+  }
 );
 
 serve({ name: "my-server", version: "1.0.0" });
@@ -111,6 +129,28 @@ Register a dynamic resource with URI variables.
 | `description` | `string` | Human-readable description |
 | `mimeType` | `string` | Content type |
 | `handler` | `(vars) => Promise<string>` | Async function receiving extracted variables |
+
+### `sample(options)`
+
+Request an LLM completion from the client. Can only be used inside tool/resource handlers after `serve()` is running.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `options.messages` | `SampleMessage[]` | Conversation messages |
+| `options.maxTokens` | `number` | Max tokens to generate (default: 1000) |
+| `options.temperature` | `number` | Sampling temperature (optional) |
+| `options.systemPrompt` | `string` | System prompt (optional) |
+
+Returns `Promise<string>` with the assistant's response text.
+
+```ts
+const response = await sample({
+  messages: [
+    { role: "user", content: { type: "text", text: "Hello!" } }
+  ],
+  maxTokens: 100
+});
+```
 
 ### `serve(options?)`
 
