@@ -88,6 +88,10 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method: ${method}` } };
 }
 
+function log(...args: unknown[]) {
+  console.error("[mcp]", ...args);
+}
+
 export async function serve() {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -102,7 +106,9 @@ export async function serve() {
       if (!line.trim()) continue;
       const req = JSON.parse(line) as JsonRpcRequest;
       const res = await handleRequest(req);
-      console.log(JSON.stringify(res));
+      if (req.id !== undefined) {
+        console.log(JSON.stringify(res));
+      }
     }
   }
 }
