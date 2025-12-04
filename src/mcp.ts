@@ -140,7 +140,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       const match = uri.match(template.pattern);
       if (match) {
         const vars: Record<string, string> = {};
-        template.vars.forEach((v, i) => (vars[v] = match[i + 1]));
+        template.vars.forEach((v, i) => (vars[v] = match[i + 1] ?? ""));
         try {
           const data = await template.handler(vars);
           return {
