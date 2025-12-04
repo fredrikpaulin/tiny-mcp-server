@@ -1,17 +1,17 @@
 # tiny-mcp-server
 
-A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. No dependencies, ~100 lines.
+A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. No dependencies, ~150 lines.
 
 ## Install
 
 ```bash
-bun install
+bun add tiny-mcp-server
 ```
 
 ## Usage
 
 ```ts
-import { registerTool, registerResource, registerResourceTemplate, sample, serve } from "./mcp";
+import { registerTool, registerResource, registerResourceTemplate, sample, serve } from "tiny-mcp-server";
 
 // Register a tool
 registerTool(
@@ -69,28 +69,29 @@ serve({ name: "my-server", version: "1.0.0" });
 ## Run
 
 ```bash
-bun src/index.ts
+bun server.ts
 ```
 
 ## Test
 
 ```bash
 # Initialize
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | bun server.ts
 
 # List tools
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | bun server.ts
 
 # Call a tool
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"}}}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"}}}' | bun server.ts
 
 # List resources
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | bun server.ts
 
 # Read a resource
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"info://server"}}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"info://server"}}' | bun server.ts
+
 # Read a resource template
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"env://HOME"}}' | bun src/index.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"env://HOME"}}' | bun server.ts
 ```
 
 ## API
@@ -116,7 +117,20 @@ Register a resource that can be read by MCP clients.
 | `name` | `string` | Human-readable name |
 | `description` | `string` | Human-readable description |
 | `mimeType` | `string` | Content type (e.g. `application/json`) |
-| `handler` | `() => Promise<string>` | Async function returning content |
+| `handler` | `() => Promise<string \| Uint8Array>` | Async function returning content (text or binary) |
+
+Text resources return strings, binary resources return `Uint8Array` (auto base64 encoded):
+
+```ts
+// Binary resource
+registerResource(
+  "image://logo",
+  "Logo",
+  "Company logo",
+  "image/png",
+  async () => Bun.file("logo.png").bytes()
+);
+```
 
 ### `registerResourceTemplate(uriTemplate, name, description, mimeType, handler)`
 
@@ -128,7 +142,7 @@ Register a dynamic resource with URI variables.
 | `name` | `string` | Human-readable name |
 | `description` | `string` | Human-readable description |
 | `mimeType` | `string` | Content type |
-| `handler` | `(vars) => Promise<string>` | Async function receiving extracted variables |
+| `handler` | `(vars) => Promise<string \| Uint8Array>` | Async function receiving extracted variables |
 
 ### `sample(options)`
 

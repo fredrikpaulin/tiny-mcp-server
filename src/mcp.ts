@@ -26,8 +26,8 @@ interface JsonRpcResponse {
 }
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
-type ResourceHandler = () => Promise<string>;
-type ResourceTemplateHandler = (vars: Record<string, string>) => Promise<string>;
+type ResourceHandler = () => Promise<string | Uint8Array>;
+type ResourceTemplateHandler = (vars: Record<string, string>) => Promise<string | Uint8Array>;
 
 const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
@@ -55,6 +55,13 @@ interface ServerOptions {
 }
 
 let serverInfo = { name: "mcp-server", version: "1.0.0" };
+
+function formatResourceContent(uri: string, mimeType: string, data: string | Uint8Array) {
+  if (typeof data === "string") {
+    return { uri, mimeType, text: data };
+  }
+  return { uri, mimeType, blob: Buffer.from(data).toString("base64") };
+}
 
 async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   const { id, method, params } = req;
@@ -116,11 +123,11 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
 
     if (resource) {
       try {
-        const text = await resource.handler();
+        const data = await resource.handler();
         return {
           jsonrpc: "2.0",
           id,
-          result: { contents: [{ uri, mimeType: resource.mimeType, text }] },
+          result: { contents: [formatResourceContent(uri, resource.mimeType, data)] },
         };
       } catch (e) {
         return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
@@ -133,11 +140,11 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
         const vars: Record<string, string> = {};
         template.vars.forEach((v, i) => (vars[v] = match[i + 1]));
         try {
-          const text = await template.handler(vars);
+          const data = await template.handler(vars);
           return {
             jsonrpc: "2.0",
             id,
-            result: { contents: [{ uri, mimeType: template.mimeType, text }] },
+            result: { contents: [formatResourceContent(uri, template.mimeType, data)] },
           };
         } catch (e) {
           return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
