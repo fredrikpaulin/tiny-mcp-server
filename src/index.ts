@@ -1,1 +1,2 @@
-console.log("Hello via Bun!");
+// Re-export everything from mcp.ts
+export * from "./mcp";
