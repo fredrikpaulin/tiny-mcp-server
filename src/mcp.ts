@@ -27,7 +27,9 @@ interface JsonRpcResponse {
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 type ResourceHandler = () => Promise<string | Uint8Array>;
-type ResourceTemplateHandler = (vars: Record<string, string>) => Promise<string | Uint8Array>;
+
+interface TemplateVars { [key: string]: string }
+type ResourceTemplateHandler = (vars: TemplateVars) => Promise<string | Uint8Array>;
 
 const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();

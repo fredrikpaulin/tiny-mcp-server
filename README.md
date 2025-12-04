@@ -42,7 +42,7 @@ registerResourceTemplate(
   "Environment Variable",
   "Read an environment variable",
   "text/plain",
-  async ({ name }: { name: string }) => process.env[name] || ""
+  async ({ name }) => process.env[name!] || ""
 );
 
 // Use sampling inside a tool
