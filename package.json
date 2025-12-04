@@ -4,7 +4,14 @@
   "description": "A tiny MCP server implementation for Bun",
   "author": "Fredrik Paulin <fredrik@rymdskepp.com>",
   "license": "MIT",
-  "keywords": ["mcp", "server", "bun", "model-context-protocol", "anthropic", "claude"],
+  "keywords": [
+    "mcp",
+    "server",
+    "bun",
+    "model-context-protocol",
+    "anthropic",
+    "claude"
+  ],
   "type": "module",
   "main": "src/mcp.ts",
   "module": "src/mcp.ts",
@@ -12,10 +19,15 @@
   "exports": {
     ".": "./src/mcp.ts"
   },
-  "files": ["src/mcp.ts", "src/index.ts", "README.md", "LICENSE"],
+  "files": [
+    "src/mcp.ts",
+    "src/index.ts",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/fredrikpaulin/tiny-mcp-server"
+    "url": "git+https://github.com/fredrikpaulin/tiny-mcp-server.git"
   },
   "devDependencies": {
     "@types/bun": "latest"
