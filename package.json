@@ -1,6 +1,6 @@
 {
   "name": "tiny-mcp-server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A tiny MCP server implementation for Bun",
   "author": "Fredrik Paulin <fredrik@rymdskepp.com>",
   "license": "MIT",
