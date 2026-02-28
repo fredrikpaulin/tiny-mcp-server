@@ -73,11 +73,12 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
   }
 
   if (method === "initialize") {
+    const { protocolVersion } = (params || {}) as { protocolVersion?: string };
     return {
       jsonrpc: "2.0",
       id,
       result: {
-        protocolVersion: "2024-11-05",
+        protocolVersion: protocolVersion || "2025-11-25",
         capabilities: { tools: {}, resources: {}, sampling: {} },
         serverInfo: { name: serverInfo.name, version: serverInfo.version },
       },
