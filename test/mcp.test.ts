@@ -529,3 +529,105 @@ describe("tools/call input validation", () => {
     expect(called).toBe(false);
   });
 });
+
+// --- streaming tool handlers ---
+
+describe("streaming tool handlers", () => {
+  test("async generator concatenates chunks into final response", async () => {
+    registerTool("stream", "Stream", {}, async function* () {
+      yield "Hello";
+      yield ", ";
+      yield "world!";
+    });
+
+    const res = await rpc("tools/call", { name: "stream", arguments: {} });
+    const text = (res.result as any).content[0].text;
+    expect(text).toBe("Hello, world!");
+  });
+
+  test("async generator sends notifications via write callback", async () => {
+    registerTool("stream", "Stream", {}, async function* () {
+      yield "chunk1";
+      yield "chunk2";
+      yield "chunk3";
+    });
+
+    const notifications: object[] = [];
+    const write = (msg: object) => notifications.push(msg);
+
+    const res = await handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stream", arguments: {} } },
+      write
+    );
+
+    expect(notifications).toHaveLength(3);
+    expect((notifications[0] as any).method).toBe("notifications/tools/progress");
+    expect((notifications[0] as any).params.text).toBe("chunk1");
+    expect((notifications[1] as any).params.text).toBe("chunk2");
+    expect((notifications[2] as any).params.text).toBe("chunk3");
+    expect((res.result as any).content[0].text).toBe("chunk1chunk2chunk3");
+  });
+
+  test("async generator works without write callback", async () => {
+    registerTool("stream", "Stream", {}, async function* () {
+      yield "a";
+      yield "b";
+    });
+
+    const res = await rpc("tools/call", { name: "stream", arguments: {} });
+    expect((res.result as any).content[0].text).toBe("ab");
+  });
+
+  test("regular async handler still works unchanged", async () => {
+    registerTool("regular", "Regular", {}, async ({ x }) => ({ value: x }));
+
+    const res = await rpc("tools/call", { name: "regular", arguments: { x: 42 } });
+    expect(JSON.parse((res.result as any).content[0].text)).toEqual({ value: 42 });
+  });
+
+  test("async generator that throws returns error response", async () => {
+    registerTool("fail", "Fail", {}, async function* () {
+      yield "partial";
+      throw new ToolError("stream_error", "broke mid-stream");
+    });
+
+    const res = await rpc("tools/call", { name: "fail", arguments: {} });
+    const parsed = JSON.parse((res.result as any).content[0].text);
+    expect(parsed.isError).toBe(true);
+    expect(parsed.code).toBe("stream_error");
+  });
+
+  test("empty generator returns empty string", async () => {
+    registerTool("empty", "Empty", {}, async function* () {});
+
+    const res = await rpc("tools/call", { name: "empty", arguments: {} });
+    expect((res.result as any).content[0].text).toBe("");
+  });
+
+  test("validation runs before generator executes", async () => {
+    const schema = { type: "object", required: ["text"], properties: { text: { type: "string" } } };
+    let started = false;
+    registerTool("guarded", "Guarded", schema, async function* () {
+      started = true;
+      yield "should not run";
+    });
+
+    const res = await rpc("tools/call", { name: "guarded", arguments: {} });
+    const parsed = JSON.parse((res.result as any).content[0].text);
+    expect(parsed.code).toBe("validation_failed");
+    expect(started).toBe(false);
+  });
+
+  test("notifications have no id field", async () => {
+    registerTool("stream", "Stream", {}, async function* () { yield "x"; });
+
+    const notifications: any[] = [];
+    await handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stream", arguments: {} } },
+      (msg) => notifications.push(msg)
+    );
+
+    expect(notifications[0].id).toBeUndefined();
+    expect(notifications[0].jsonrpc).toBe("2.0");
+  });
+});

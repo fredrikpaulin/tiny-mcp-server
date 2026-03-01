@@ -33,7 +33,7 @@ export class ToolError extends Error {
   }
 }
 
-type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
+type ToolHandler = (params: Record<string, unknown>) => Promise<unknown> | AsyncGenerator<string, unknown, undefined>;
 type ResourceHandler = () => Promise<string | Uint8Array>;
 
 interface TemplateVars { [key: string]: string }
@@ -137,7 +137,7 @@ function formatResourceContent(uri: string, mimeType: string, data: string | Uin
   return { uri, mimeType, blob: Buffer.from(data).toString("base64") };
 }
 
-export async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
+export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) => void): Promise<JsonRpcResponse> {
   const { id, method, params } = req;
 
   if (method === "ping") {
@@ -250,11 +250,28 @@ export async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcRespons
     }
 
     try {
-      const result = await tool.handler(args);
+      const result = tool.handler(args);
+
+      // Streaming handler (async generator)
+      if (result && typeof result === "object" && Symbol.asyncIterator in result) {
+        const chunks: string[] = [];
+        for await (const chunk of result as AsyncGenerator<string>) {
+          chunks.push(chunk);
+          if (write) write({ jsonrpc: "2.0", method: "notifications/tools/progress", params: { text: chunk } });
+        }
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { content: [{ type: "text", text: chunks.join("") }] },
+        };
+      }
+
+      // Regular handler (promise)
+      const resolved = await result;
       return {
         jsonrpc: "2.0",
         id,
-        result: { content: [{ type: "text", text: JSON.stringify(result) }] },
+        result: { content: [{ type: "text", text: JSON.stringify(resolved) }] },
       };
     } catch (e) {
       const isToolError = e instanceof ToolError;
@@ -348,7 +365,8 @@ export async function serve(options: ServerOptions = {}) {
 
         // Incoming request
         const req = msg as JsonRpcRequest;
-        const res = await handleRequest(req);
+        const write = (msg: object) => console.log(JSON.stringify(msg));
+        const res = await handleRequest(req, write);
         if (req.id !== undefined) {
           console.log(JSON.stringify(res));
         }

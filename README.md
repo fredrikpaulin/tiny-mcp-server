@@ -55,6 +55,8 @@ That's it — you have a working MCP server with automatic input validation, str
 
 **Resources** — Expose read-only data via static URIs or dynamic URI templates with variable extraction.
 
+**Streaming** — Use async generator handlers to stream text chunks to the client as notifications. The final response contains the complete text. Backward compatible — regular handlers work unchanged.
+
 **Sampling** — Request LLM completions from the connected client inside your tool handlers, without needing your own API keys.
 
 ## Test It
@@ -82,6 +84,7 @@ bun test
 - [Input Validation](docs/validation.md) — Supported schema keywords, error format, opting out
 - [Error Handling](docs/errors.md) — ToolError, error codes, patterns
 - [Resources](docs/resources.md) — Static resources, templates, binary content
+- [Streaming](docs/streaming.md) — Async generator handlers for streaming responses
 - [Sampling](docs/sampling.md) — Requesting LLM completions from the client
 - [Testing](docs/testing.md) — Unit and integration testing with bun:test
 - [AI Agent HOWTO](docs/HOWTO-AI-AGENTS.md) — Step-by-step guide for AI agents implementing a server

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+- **Streaming tool responses**: Tool handlers can now be async generators (`async function*`). Each yielded string chunk is sent to the client as a `notifications/tools/progress` JSON-RPC notification, and the final response contains the full concatenated text. Backward compatible — regular async handlers work unchanged.
+
+### Changed
+- `handleRequest()` accepts an optional second `write` callback parameter for streaming notifications.
+- `ToolHandler` type now accepts both `Promise<unknown>` and `AsyncGenerator<string>` return types.
+
 ## 0.1.0
 
 ### Added

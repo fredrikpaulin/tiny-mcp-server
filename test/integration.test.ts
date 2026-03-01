@@ -10,15 +10,18 @@ async function createServer() {
     stderr: "pipe",
   });
 
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  let buf = "";
+  const parsed: any[] = [];
+
   const send = async (msg: object) => {
     proc.stdin.write(JSON.stringify(msg) + "\n");
     proc.stdin.flush();
   };
 
   const readLine = async (timeout = 3000): Promise<any> => {
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
+    if (parsed.length) return parsed.shift();
 
     const timer = setTimeout(() => reader.cancel(), timeout);
     try {
@@ -26,15 +29,29 @@ async function createServer() {
         const { value, done } = await reader.read();
         if (done) break;
         buf += decoder.decode(value);
-        const nl = buf.indexOf("\n");
-        if (nl !== -1) {
-          const line = buf.slice(0, nl);
-          reader.releaseLock();
-          return JSON.parse(line);
+
+        let nl;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          parsed.push(JSON.parse(buf.slice(0, nl)));
+          buf = buf.slice(nl + 1);
         }
+
+        if (parsed.length) return parsed.shift();
       }
     } finally {
       clearTimeout(timer);
+    }
+    throw new Error("No response received");
+  };
+
+  // Read messages until we get one with a matching id (the final response)
+  const readUntilResponse = async (id: number | string, timeout = 3000): Promise<{ notifications: any[]; response: any }> => {
+    const notifications: any[] = [];
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const msg = await readLine(deadline - Date.now());
+      if (msg.id === id) return { notifications, response: msg };
+      notifications.push(msg);
     }
     throw new Error("No response received");
   };
@@ -44,7 +61,7 @@ async function createServer() {
     proc.kill();
   };
 
-  return { send, readLine, close, proc };
+  return { send, readLine, readUntilResponse, close, proc };
 }
 
 describe("stdio transport integration", () => {
@@ -200,6 +217,51 @@ describe("stdio transport integration", () => {
       const res = await server.readLine();
       const parsed = JSON.parse(res.result.content[0].text);
       expect(parsed).toEqual({ echoed: "valid" });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("streaming tool sends notifications then final response", async () => {
+    const server = await createServer();
+    try {
+      await server.send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "count", arguments: { n: 3 } },
+      });
+      const { notifications, response } = await server.readUntilResponse(1);
+
+      // Should have 5 notifications: "1", ",", "2", ",", "3"
+      expect(notifications.length).toBe(5);
+      for (const n of notifications) {
+        expect(n.method).toBe("notifications/tools/progress");
+        expect(n.id).toBeUndefined();
+      }
+      expect(notifications.map((n: any) => n.params.text).join("")).toBe("1,2,3");
+
+      // Final response has concatenated text
+      expect(response.id).toBe(1);
+      expect(response.result.content[0].text).toBe("1,2,3");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("streaming tool notifications arrive in order", async () => {
+    const server = await createServer();
+    try {
+      await server.send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "count", arguments: { n: 5 } },
+      });
+      const { notifications } = await server.readUntilResponse(1);
+
+      const chunks = notifications.map((n: any) => n.params.text);
+      expect(chunks).toEqual(["1", ",", "2", ",", "3", ",", "4", ",", "5"]);
     } finally {
       server.close();
     }

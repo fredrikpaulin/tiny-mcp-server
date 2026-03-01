@@ -30,7 +30,7 @@ registerTool(
 | `name` | `string` | Unique tool identifier |
 | `description` | `string` | Human-readable description shown to clients |
 | `schema` | `object` | JSON Schema defining the tool's input shape |
-| `handler` | `(params: Record<string, unknown>) => Promise<unknown>` | Async function that executes the tool |
+| `handler` | `(params) => Promise<unknown>` or `async function*` | Async function or async generator that executes the tool |
 | `options` | `ToolOptions` | Optional configuration (see below) |
 
 **Options:**
@@ -39,7 +39,9 @@ registerTool(
 |-------|------|---------|-------------|
 | `validateInput` | `boolean` | `true` | Validate arguments against `schema` before calling handler |
 
-The handler receives the parsed `arguments` object from the MCP `tools/call` request. Whatever the handler returns is JSON-stringified and sent back as a text content block.
+The handler receives the parsed `arguments` object from the MCP `tools/call` request. For regular async handlers, the return value is JSON-stringified and sent as a text content block. For async generator handlers, each yielded string is sent as a notification and the concatenated result is sent as the final response.
+
+See [Streaming](streaming.md) for the async generator pattern.
 
 If a tool is registered with the same name as an existing tool, it replaces the previous registration.
 
@@ -212,7 +214,7 @@ serve({ name: "my-server", version: "1.0.0" });
 | `options.name` | `string` | `"mcp-server"` | Server name returned in `initialize` response |
 | `options.version` | `string` | `"1.0.0"` | Server version returned in `initialize` response |
 
-## handleRequest(req)
+## handleRequest(req, write?)
 
 Process a single JSON-RPC request and return the response. Exported primarily for unit testing — in production, `serve()` calls this internally.
 
@@ -224,6 +226,13 @@ const response = await handleRequest({
   id: 1,
   method: "tools/list"
 });
+```
+
+The optional `write` callback receives notification objects during streaming tool execution. When omitted, notifications are silently skipped:
+
+```ts
+const notifications: object[] = [];
+const response = await handleRequest(req, (msg) => notifications.push(msg));
 ```
 
 ## _reset()
