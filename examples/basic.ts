@@ -52,4 +52,23 @@ registerTool(
   }
 );
 
+// Example streaming tool: count
+registerTool(
+  "count",
+  "Count from 1 to n, streaming each number",
+  {
+    type: "object",
+    properties: {
+      n: { type: "integer", minimum: 1, maximum: 10, description: "Number to count to" }
+    },
+    required: ["n"]
+  },
+  async function* ({ n }) {
+    for (let i = 1; i <= (n as number); i++) {
+      yield `${i}`;
+      if (i < (n as number)) yield ",";
+    }
+  }
+);
+
 serve({ name: "tiny-mcp-server", version: "0.0.1" });

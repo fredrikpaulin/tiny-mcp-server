@@ -25,20 +25,31 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
-type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
+export class ToolError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+type ToolHandler = (params: Record<string, unknown>) => Promise<unknown> | AsyncGenerator<string, unknown, undefined>;
 type ResourceHandler = () => Promise<string | Uint8Array>;
 
 interface TemplateVars { [key: string]: string }
 type ResourceTemplateHandler = (vars: TemplateVars) => Promise<string | Uint8Array>;
 
-const tools: Map<string, { description: string; schema: object; handler: ToolHandler }> = new Map();
+interface ToolOptions { validateInput?: boolean }
+interface ToolEntry { description: string; schema: object; handler: ToolHandler; validateInput: boolean }
+
+const tools: Map<string, ToolEntry> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
 const resourceTemplates: Map<string, { name: string; description: string; mimeType: string; pattern: RegExp; vars: string[]; handler: ResourceTemplateHandler }> = new Map();
 const pendingRequests: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }> = new Map();
 let requestId = 0;
 
-export function registerTool(name: string, description: string, schema: object, handler: ToolHandler) {
-  tools.set(name, { description, schema, handler });
+export function registerTool(name: string, description: string, schema: object, handler: ToolHandler, options?: ToolOptions) {
+  tools.set(name, { description, schema, handler, validateInput: options?.validateInput !== false });
 }
 
 export function registerResource(uri: string, name: string, description: string, mimeType: string, handler: ResourceHandler) {
@@ -58,6 +69,67 @@ interface ServerOptions {
 
 let serverInfo = { name: "mcp-server", version: "1.0.0" };
 
+interface ValidationError { path: string; message: string }
+
+function typeOf(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  return typeof v;
+}
+
+export function validateInput(schema: Record<string, unknown>, value: unknown, path = ""): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const schemaType = schema.type as string | undefined;
+
+  if (schemaType) {
+    const actual = typeOf(value);
+    if (schemaType === "integer") {
+      if (typeof value !== "number" || !Number.isInteger(value))
+        errors.push({ path: path || ".", message: `expected integer, got ${actual}` });
+    } else if (actual !== schemaType) {
+      errors.push({ path: path || ".", message: `expected ${schemaType}, got ${actual}` });
+    }
+  }
+
+  if (schema.enum && !((schema.enum as unknown[]).includes(value))) {
+    errors.push({ path: path || ".", message: `must be one of: ${(schema.enum as unknown[]).join(", ")}` });
+  }
+
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < (schema.minLength as number))
+      errors.push({ path: path || ".", message: `must be at least ${schema.minLength} characters` });
+    if (schema.maxLength !== undefined && value.length > (schema.maxLength as number))
+      errors.push({ path: path || ".", message: `must be at most ${schema.maxLength} characters` });
+  }
+
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < (schema.minimum as number))
+      errors.push({ path: path || ".", message: `must be >= ${schema.minimum}` });
+    if (schema.maximum !== undefined && value > (schema.maximum as number))
+      errors.push({ path: path || ".", message: `must be <= ${schema.maximum}` });
+  }
+
+  if (typeOf(value) === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    const required = (schema.required || []) as string[];
+    for (const key of required) {
+      if (obj[key] === undefined) errors.push({ path: path ? `${path}.${key}` : key, message: "required" });
+    }
+    const props = (schema.properties || {}) as Record<string, Record<string, unknown>>;
+    for (const [key, propSchema] of Object.entries(props)) {
+      if (obj[key] !== undefined) errors.push(...validateInput(propSchema, obj[key], path ? `${path}.${key}` : key));
+    }
+  }
+
+  if (Array.isArray(value) && schema.items) {
+    for (let i = 0; i < value.length; i++) {
+      errors.push(...validateInput(schema.items as Record<string, unknown>, value[i], `${path || "."}[${i}]`));
+    }
+  }
+
+  return errors;
+}
+
 function formatResourceContent(uri: string, mimeType: string, data: string | Uint8Array) {
   if (typeof data === "string") {
     return { uri, mimeType, text: data };
@@ -65,7 +137,7 @@ function formatResourceContent(uri: string, mimeType: string, data: string | Uin
   return { uri, mimeType, blob: Buffer.from(data).toString("base64") };
 }
 
-async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
+export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) => void): Promise<JsonRpcResponse> {
   const { id, method, params } = req;
 
   if (method === "ping") {
@@ -166,18 +238,47 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse> {
       return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } };
     }
 
+    if (tool.validateInput) {
+      const errors = validateInput(tool.schema as Record<string, unknown>, args);
+      if (errors.length) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { content: [{ type: "text", text: JSON.stringify({ isError: true, code: "validation_failed", errors }) }] },
+        };
+      }
+    }
+
     try {
-      const result = await tool.handler(args);
+      const result = tool.handler(args);
+
+      // Streaming handler (async generator)
+      if (result && typeof result === "object" && Symbol.asyncIterator in result) {
+        const chunks: string[] = [];
+        for await (const chunk of result as AsyncGenerator<string>) {
+          chunks.push(chunk);
+          if (write) write({ jsonrpc: "2.0", method: "notifications/tools/progress", params: { text: chunk } });
+        }
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { content: [{ type: "text", text: chunks.join("") }] },
+        };
+      }
+
+      // Regular handler (promise)
+      const resolved = await result;
       return {
         jsonrpc: "2.0",
         id,
-        result: { content: [{ type: "text", text: JSON.stringify(result) }] },
+        result: { content: [{ type: "text", text: JSON.stringify(resolved) }] },
       };
     } catch (e) {
+      const isToolError = e instanceof ToolError;
       return {
         jsonrpc: "2.0",
         id,
-        result: { content: [{ type: "text", text: JSON.stringify({ isError: true, error: String(e) }) }] },
+        result: { content: [{ type: "text", text: JSON.stringify({ isError: true, code: isToolError ? (e as ToolError).code : "internal_error", error: String(e) }) }] },
       };
     }
   }
@@ -219,6 +320,16 @@ export async function sample(options: SampleOptions): Promise<string> {
   return result.content.text;
 }
 
+/** Reset all registrations. For testing only. */
+export function _reset() {
+  tools.clear();
+  resources.clear();
+  resourceTemplates.clear();
+  pendingRequests.clear();
+  requestId = 0;
+  serverInfo = { name: "mcp-server", version: "1.0.0" };
+}
+
 export async function serve(options: ServerOptions = {}) {
   serverInfo = {
     name: options.name || "mcp-server",
@@ -254,7 +365,8 @@ export async function serve(options: ServerOptions = {}) {
 
         // Incoming request
         const req = msg as JsonRpcRequest;
-        const res = await handleRequest(req);
+        const write = (msg: object) => console.log(JSON.stringify(msg));
+        const res = await handleRequest(req, write);
         if (req.id !== undefined) {
           console.log(JSON.stringify(res));
         }

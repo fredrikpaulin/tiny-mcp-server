@@ -1,6 +1,6 @@
 # tiny-mcp-server
 
-A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. No dependencies, ~150 lines.
+A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. No dependencies, single file, built-in input validation.
 
 ## Install
 
@@ -8,26 +8,24 @@ A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. 
 bun add tiny-mcp-server
 ```
 
-## Usage
+## Quick Start
 
 ```ts
-import { registerTool, registerResource, registerResourceTemplate, sample, serve } from "tiny-mcp-server";
+import { registerTool, registerResource, ToolError, serve } from "tiny-mcp-server";
 
-// Register a tool
 registerTool(
-  "echo",
-  "Echoes back the provided message",
+  "greet",
+  "Greet someone by name",
   {
     type: "object",
+    required: ["name"],
     properties: {
-      message: { type: "string", description: "Message to echo back" }
-    },
-    required: ["message"]
+      name: { type: "string", minLength: 1 }
+    }
   },
-  async ({ message }) => ({ echoed: message })
+  async ({ name }) => ({ greeting: `Hello, ${name}!` })
 );
 
-// Register a resource
 registerResource(
   "info://server",
   "Server Info",
@@ -36,43 +34,32 @@ registerResource(
   async () => JSON.stringify({ name: "my-server", version: "1.0.0" })
 );
 
-// Register a resource template
-registerResourceTemplate(
-  "env://{name}",
-  "Environment Variable",
-  "Read an environment variable",
-  "text/plain",
-  async ({ name }) => process.env[name!] || ""
-);
-
-// Use sampling inside a tool
-registerTool(
-  "summarize",
-  "Summarize text using the client's LLM",
-  {
-    type: "object",
-    properties: { text: { type: "string" } },
-    required: ["text"]
-  },
-  async ({ text }) => {
-    const summary = await sample({
-      messages: [{ role: "user", content: { type: "text", text: `Summarize: ${text}` } }],
-      maxTokens: 200
-    });
-    return { summary };
-  }
-);
-
 serve({ name: "my-server", version: "1.0.0" });
 ```
 
-## Run
+Run it:
 
 ```bash
 bun server.ts
 ```
 
-## Test
+That's it — you have a working MCP server with automatic input validation, structured errors, and stdio transport.
+
+## Features
+
+**Tools** — Register async functions as MCP tools with JSON Schema input definitions. Clients discover tools via `tools/list` and call them via `tools/call`.
+
+**Input validation** — Tool arguments are validated against their JSON Schema before the handler runs. Supports `type`, `required`, `properties`, `enum`, `items`, `minimum`/`maximum`, `minLength`/`maxLength`. No dependencies.
+
+**Structured errors** — Throw `ToolError` with a code like `"not_found"` or `"permission_denied"` so clients can handle errors programmatically instead of parsing strings.
+
+**Resources** — Expose read-only data via static URIs or dynamic URI templates with variable extraction.
+
+**Streaming** — Use async generator handlers to stream text chunks to the client as notifications. The final response contains the complete text. Backward compatible — regular handlers work unchanged.
+
+**Sampling** — Request LLM completions from the connected client inside your tool handlers, without needing your own API keys.
+
+## Test It
 
 ```bash
 # Initialize
@@ -82,98 +69,40 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | bun server.ts
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | bun server.ts
 
 # Call a tool
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"}}}' | bun server.ts
-
-# List resources
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/list"}' | bun server.ts
-
-# Read a resource
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"info://server"}}' | bun server.ts
-
-# Read a resource template
-echo '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"env://HOME"}}' | bun server.ts
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"greet","arguments":{"name":"World"}}}' | bun server.ts
 ```
 
-## API
+## Run Tests
 
-### `registerTool(name, description, schema, handler)`
-
-Register a tool that can be called by MCP clients.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | Tool identifier |
-| `description` | `string` | Human-readable description |
-| `schema` | `object` | JSON Schema for input validation |
-| `handler` | `(params) => Promise<unknown>` | Async function to execute |
-
-### `registerResource(uri, name, description, mimeType, handler)`
-
-Register a resource that can be read by MCP clients.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `uri` | `string` | Resource URI (e.g. `file://config.json`) |
-| `name` | `string` | Human-readable name |
-| `description` | `string` | Human-readable description |
-| `mimeType` | `string` | Content type (e.g. `application/json`) |
-| `handler` | `() => Promise<string \| Uint8Array>` | Async function returning content (text or binary) |
-
-Text resources return strings, binary resources return `Uint8Array` (auto base64 encoded):
-
-```ts
-// Binary resource
-registerResource(
-  "image://logo",
-  "Logo",
-  "Company logo",
-  "image/png",
-  async () => Bun.file("logo.png").bytes()
-);
+```bash
+bun test
 ```
 
-### `registerResourceTemplate(uriTemplate, name, description, mimeType, handler)`
+## Documentation
 
-Register a dynamic resource with URI variables.
+- [API Reference](docs/api.md) — Complete reference for all exports
+- [Input Validation](docs/validation.md) — Supported schema keywords, error format, opting out
+- [Error Handling](docs/errors.md) — ToolError, error codes, patterns
+- [Resources](docs/resources.md) — Static resources, templates, binary content
+- [Streaming](docs/streaming.md) — Async generator handlers for streaming responses
+- [Sampling](docs/sampling.md) — Requesting LLM completions from the client
+- [Testing](docs/testing.md) — Unit and integration testing with bun:test
+- [AI Agent HOWTO](docs/HOWTO-AI-AGENTS.md) — Step-by-step guide for AI agents implementing a server
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `uriTemplate` | `string` | URI pattern with `{var}` placeholders |
-| `name` | `string` | Human-readable name |
-| `description` | `string` | Human-readable description |
-| `mimeType` | `string` | Content type |
-| `handler` | `(vars) => Promise<string \| Uint8Array>` | Async function receiving extracted variables |
+## MCP Client Configuration
 
-### `sample(options)`
+For Claude Desktop, add to your config:
 
-Request an LLM completion from the client. Can only be used inside tool/resource handlers after `serve()` is running.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `options.messages` | `SampleMessage[]` | Conversation messages |
-| `options.maxTokens` | `number` | Max tokens to generate (default: 1000) |
-| `options.temperature` | `number` | Sampling temperature (optional) |
-| `options.systemPrompt` | `string` | System prompt (optional) |
-
-Returns `Promise<string>` with the assistant's response text.
-
-```ts
-const response = await sample({
-  messages: [
-    { role: "user", content: { type: "text", text: "Hello!" } }
-  ],
-  maxTokens: 100
-});
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "path/to/bun",
+      "args": ["run", "/path/to/server.ts"]
+    }
+  }
+}
 ```
-
-### `serve(options?)`
-
-Start the MCP server on stdio.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `options.name` | `string` | Server name (default: `"mcp-server"`) |
-| `options.version` | `string` | Server version (default: `"1.0.0"`) |
 
 ## License
 
