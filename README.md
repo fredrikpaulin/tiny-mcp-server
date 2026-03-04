@@ -78,6 +78,33 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"greet","ar
 bun test
 ```
 
+## Module Framework
+
+Compose functionality using reusable modules with automatic dependency resolution. Each module is a factory function that registers tools and exposes APIs to other modules via a shared context.
+
+```ts
+import { loadModules, serve } from "tiny-mcp-server";
+import recall from "tiny-mcp-server/src/modules/recall";
+import patterns from "tiny-mcp-server/src/modules/patterns";
+import beacon from "tiny-mcp-server/src/modules/beacon";
+
+await loadModules([
+  recall({ dbPath: "./data.db" }),
+  patterns(),
+  beacon(),
+]);
+
+serve({ name: "my-server", version: "1.0.0" });
+```
+
+**Built-in modules:**
+
+- **Recall** — SQLite persistence with key-value storage and pattern queries
+- **Patterns** — Context graph (nodes, edges, notes) for mapping project structure
+- **Beacon** — Fast search across all stored context with scored results
+
+See [Module Framework](docs/modules.md) for writing your own modules.
+
 ## Documentation
 
 - [API Reference](docs/api.md) — Complete reference for all exports
@@ -87,6 +114,10 @@ bun test
 - [Streaming](docs/streaming.md) — Async generator handlers for streaming responses
 - [Sampling](docs/sampling.md) — Requesting LLM completions from the client
 - [Testing](docs/testing.md) — Unit and integration testing with bun:test
+- [Module Framework](docs/modules.md) — Writing and loading composable modules
+- [Recall Module](docs/modules-recall.md) — SQLite persistence module
+- [Patterns Module](docs/modules-patterns.md) — Context graph module
+- [Beacon Module](docs/modules-beacon.md) — Context search module
 - [AI Agent HOWTO](docs/HOWTO-AI-AGENTS.md) — Step-by-step guide for AI agents implementing a server
 
 ## MCP Client Configuration

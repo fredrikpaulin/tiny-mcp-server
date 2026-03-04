@@ -42,6 +42,26 @@ type ResourceTemplateHandler = (vars: TemplateVars) => Promise<string | Uint8Arr
 interface ToolOptions { validateInput?: boolean }
 interface ToolEntry { description: string; schema: object; handler: ToolHandler; validateInput: boolean }
 
+// === Module Framework ===
+
+export interface ModuleContext {
+  registerTool: typeof registerTool;
+  registerResource: typeof registerResource;
+  registerResourceTemplate: typeof registerResourceTemplate;
+  validateInput: typeof validateInput;
+  ToolError: typeof ToolError;
+  sample: typeof sample;
+  [key: string]: unknown;
+}
+
+export interface ModuleMetadata {
+  name: string;
+  depends?: string[];
+  schema?: Record<string, unknown>;
+  init: (ctx: ModuleContext) => void | Promise<void>;
+  close?: () => void | Promise<void>;
+}
+
 const tools: Map<string, ToolEntry> = new Map();
 const resources: Map<string, { name: string; description: string; mimeType: string; handler: ResourceHandler }> = new Map();
 const resourceTemplates: Map<string, { name: string; description: string; mimeType: string; pattern: RegExp; vars: string[]; handler: ResourceTemplateHandler }> = new Map();
@@ -320,6 +340,57 @@ export async function sample(options: SampleOptions): Promise<string> {
   return result.content.text;
 }
 
+// === Module Loading ===
+
+const loadedModules: ModuleMetadata[] = [];
+
+function toposort(modules: ModuleMetadata[]): ModuleMetadata[] {
+  const indexed = new Map(modules.map(m => [m.name, m]));
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const result: ModuleMetadata[] = [];
+
+  function visit(name: string) {
+    if (visited.has(name)) return;
+    if (visiting.has(name)) throw new Error(`Circular dependency detected: ${name}`);
+    visiting.add(name);
+    const mod = indexed.get(name);
+    if (!mod) throw new Error(`Missing module: ${name}`);
+    for (const dep of mod.depends || []) visit(dep);
+    visiting.delete(name);
+    visited.add(name);
+    result.push(mod);
+  }
+
+  for (const mod of modules) visit(mod.name);
+  return result;
+}
+
+export async function loadModules(modules: ModuleMetadata[]) {
+  const sorted = toposort(modules);
+  const ctx: ModuleContext = {
+    registerTool, registerResource, registerResourceTemplate,
+    validateInput, ToolError, sample,
+  };
+
+  for (const mod of sorted) {
+    try {
+      await mod.init(ctx);
+    } catch (e) {
+      throw new Error(`Failed to initialize module "${mod.name}": ${e instanceof Error ? e.message : String(e)}`);
+    }
+    loadedModules.push(mod);
+  }
+}
+
+export async function closeModules() {
+  const reversed = [...loadedModules].reverse();
+  for (const mod of reversed) {
+    if (mod.close) await mod.close();
+  }
+  loadedModules.length = 0;
+}
+
 /** Reset all registrations. For testing only. */
 export function _reset() {
   tools.clear();
@@ -328,6 +399,7 @@ export function _reset() {
   pendingRequests.clear();
   requestId = 0;
   serverInfo = { name: "mcp-server", version: "1.0.0" };
+  loadedModules.length = 0;
 }
 
 export async function serve(options: ServerOptions = {}) {
