@@ -93,6 +93,7 @@ import graphExport from "tiny-mcp-server/src/modules/export";
 import diff from "tiny-mcp-server/src/modules/diff";
 import stats from "tiny-mcp-server/src/modules/stats";
 import refactor from "tiny-mcp-server/src/modules/refactor";
+import prompt from "tiny-mcp-server/src/modules/prompt";
 
 await loadModules([
   recall({ dbPath: "./data.db" }),
@@ -104,6 +105,7 @@ await loadModules([
   diff(),
   stats(),
   refactor(),
+  prompt(),
 ]);
 
 serve({ name: "my-server", version: "1.0.0" });
@@ -122,6 +124,7 @@ Modules are loaded in dependency order automatically via topological sort.
 - **Diff** — Snapshot-based graph comparison detecting added, removed, and changed nodes/edges
 - **Stats** — Aggregate metrics: complexity stats, most-connected nodes, hotspot detection, dependency depth
 - **Refactor** — Find all references to a symbol across files and preview rename impact
+- **Prompt** — Build minimal LLM context from the graph: extracts focus function, dependencies, callers, and types as a compact prompt with token budgeting
 
 See [Module Framework](docs/modules.md) for writing your own modules.
 

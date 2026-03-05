@@ -9,11 +9,12 @@
 - **Diff module** (`src/modules/diff.ts`): Snapshot-based graph comparison. Detects added, removed, and changed nodes/edges via JSON fingerprinting. Snapshots stored in Recall.
 - **Stats module** (`src/modules/stats.ts`): Aggregate metrics — complexity stats, most-connected nodes (top 10 by degree), hotspot detection (complexity × connectivity), and max dependency depth via BFS.
 - **Refactor module** (`src/modules/refactor.ts`): Find all references to a symbol across the codebase graph. Traces definitions, call sites, imports, extends, and implements edges. Rename impact preview shows all affected files and nodes.
+- **Prompt Builder module** (`src/modules/prompt.ts`): Extracts minimal LLM context from the graph. Walks from a focus symbol outward collecting parent imports, dependencies, types, and callers. Reads actual source lines from disk. Token budgeting via `maxTokens` (default 4000). Sections toggleable and grouped by file.
 - **Barrel export** (`src/index.ts`): Re-exports all modules and types from a single entry point.
 - **Error boundaries**: Tool execution catches errors with stack traces. Event emit wrapped in try/catch so one bad handler won't break others. Optional `toolTimeout` for tool execution deadlines via `Promise.race`.
 - **Watch mode**: `scanner_watch` / `scanner_unwatch` tools. Debounced file system watching with `fs.watch` recursive. `close()` lifecycle cleans up watcher.
-- **Example modules server** (`examples/modules.ts`): Complete working example loading all 9 modules.
-- **New tests**: Parser tests (20), scanner enrichment tests (10), query tests (17), export tests (14), diff tests (9), stats tests (9), refactor tests (9).
+- **Example modules server** (`examples/modules.ts`): Complete working example loading all 10 modules.
+- **New tests**: Parser tests (20), scanner enrichment tests (10), query tests (17), export tests (14), diff tests (9), stats tests (9), refactor tests (9), prompt tests (15).
 
 ### Fixed
 - **Parser**: 11 bugs fixed — regex char class brackets, regex flags, findById cache invalidation, sentinel value consumed as identifier, multiple errors overwriting, nested generics `>>` closing, optional chaining `?.` marker, template literal scope check, `export type Foo = string` double-advancing, side effects not detected in variable initializers.

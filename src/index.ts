@@ -11,6 +11,7 @@ export { default as graphExport } from "./modules/export";
 export { default as diff } from "./modules/diff";
 export { default as stats } from "./modules/stats";
 export { default as refactor } from "./modules/refactor";
+export { default as prompt } from "./modules/prompt";
 
 // Types
 export type { RecallAPI } from "./modules/recall";
@@ -22,3 +23,4 @@ export type { ExportAPI, ExportOptions } from "./modules/export";
 export type { DiffAPI, DiffResult } from "./modules/diff";
 export type { StatsAPI, StatsResult } from "./modules/stats";
 export type { RefactorAPI, FindRefsResult, RenameImpact, Reference } from "./modules/refactor";
+export type { PromptAPI, PromptResult, PromptSection, PromptOptions } from "./modules/prompt";

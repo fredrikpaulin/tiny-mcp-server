@@ -17,6 +17,7 @@ import graphExport from "../src/modules/export";
 import diff from "../src/modules/diff";
 import stats from "../src/modules/stats";
 import refactor from "../src/modules/refactor";
+import prompt from "../src/modules/prompt";
 
 await loadModules([
   recall({ dbPath: ":memory:" }),
@@ -28,6 +29,7 @@ await loadModules([
   diff(),
   stats(),
   refactor(),
+  prompt(),
 ]);
 
 serve({
