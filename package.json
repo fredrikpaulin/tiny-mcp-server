@@ -13,11 +13,14 @@
     "claude"
   ],
   "type": "module",
-  "main": "src/mcp.ts",
-  "module": "src/mcp.ts",
-  "types": "src/mcp.ts",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
   "exports": {
-    ".": "./src/mcp.ts"
+    ".": "./src/index.ts",
+    "./mcp": "./src/mcp.ts",
+    "./modules/*": "./src/modules/*.ts",
+    "./analyzer/*": "./src/analyzer/*.js"
   },
   "files": [
     "src/mcp.ts",
@@ -25,6 +28,14 @@
     "src/modules/recall.ts",
     "src/modules/patterns.ts",
     "src/modules/beacon.ts",
+    "src/modules/scanner.ts",
+    "src/modules/query.ts",
+    "src/modules/export.ts",
+    "src/modules/diff.ts",
+    "src/modules/stats.ts",
+    "src/modules/refactor.ts",
+    "src/analyzer/parser.js",
+    "src/analyzer/ast.js",
     "README.md",
     "LICENSE"
   ],

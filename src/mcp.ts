@@ -44,6 +44,8 @@ interface ToolEntry { description: string; schema: object; handler: ToolHandler;
 
 // === Module Framework ===
 
+type EventHandler = (...args: unknown[]) => void;
+
 export interface ModuleContext {
   registerTool: typeof registerTool;
   registerResource: typeof registerResource;
@@ -51,6 +53,9 @@ export interface ModuleContext {
   validateInput: typeof validateInput;
   ToolError: typeof ToolError;
   sample: typeof sample;
+  on: (event: string, handler: EventHandler) => void;
+  off: (event: string, handler: EventHandler) => void;
+  emit: (event: string, ...args: unknown[]) => void;
   [key: string]: unknown;
 }
 
@@ -85,9 +90,11 @@ export function registerResourceTemplate(uriTemplate: string, name: string, desc
 interface ServerOptions {
   name?: string;
   version?: string;
+  toolTimeout?: number; // ms, 0 = no timeout (default)
 }
 
 let serverInfo = { name: "mcp-server", version: "1.0.0" };
+let toolTimeout = 0;
 
 interface ValidationError { path: string; message: string }
 
@@ -286,8 +293,13 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
         };
       }
 
-      // Regular handler (promise)
-      const resolved = await result;
+      // Regular handler (promise), with optional timeout
+      const resolved = toolTimeout > 0
+        ? await Promise.race([
+            result,
+            new Promise((_, reject) => setTimeout(() => reject(new ToolError("timeout", `Tool "${name}" timed out after ${toolTimeout}ms`)), toolTimeout)),
+          ])
+        : await result;
       return {
         jsonrpc: "2.0",
         id,
@@ -295,10 +307,16 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
       };
     } catch (e) {
       const isToolError = e instanceof ToolError;
+      const errPayload: Record<string, unknown> = {
+        isError: true,
+        code: isToolError ? (e as ToolError).code : "internal_error",
+        error: e instanceof Error ? e.message : String(e),
+      };
+      if (e instanceof Error && e.stack && !isToolError) errPayload.stack = e.stack;
       return {
         jsonrpc: "2.0",
         id,
-        result: { content: [{ type: "text", text: JSON.stringify({ isError: true, code: isToolError ? (e as ToolError).code : "internal_error", error: String(e) }) }] },
+        result: { content: [{ type: "text", text: JSON.stringify(errPayload) }] },
       };
     }
   }
@@ -343,6 +361,24 @@ export async function sample(options: SampleOptions): Promise<string> {
 // === Module Loading ===
 
 const loadedModules: ModuleMetadata[] = [];
+const eventHandlers: Map<string, Set<EventHandler>> = new Map();
+
+function on(event: string, handler: EventHandler) {
+  let set = eventHandlers.get(event);
+  if (!set) { set = new Set(); eventHandlers.set(event, set); }
+  set.add(handler);
+}
+
+function off(event: string, handler: EventHandler) {
+  eventHandlers.get(event)?.delete(handler);
+}
+
+function emit(event: string, ...args: unknown[]) {
+  const handlers = eventHandlers.get(event);
+  if (handlers) for (const h of handlers) {
+    try { h(...args); } catch (e) { log(`Event handler error [${event}]:`, e); }
+  }
+}
 
 function toposort(modules: ModuleMetadata[]): ModuleMetadata[] {
   const indexed = new Map(modules.map(m => [m.name, m]));
@@ -370,7 +406,7 @@ export async function loadModules(modules: ModuleMetadata[]) {
   const sorted = toposort(modules);
   const ctx: ModuleContext = {
     registerTool, registerResource, registerResourceTemplate,
-    validateInput, ToolError, sample,
+    validateInput, ToolError, sample, on, off, emit,
   };
 
   for (const mod of sorted) {
@@ -381,6 +417,8 @@ export async function loadModules(modules: ModuleMetadata[]) {
     }
     loadedModules.push(mod);
   }
+
+  emit("modules:ready");
 }
 
 export async function closeModules() {
@@ -399,7 +437,9 @@ export function _reset() {
   pendingRequests.clear();
   requestId = 0;
   serverInfo = { name: "mcp-server", version: "1.0.0" };
+  toolTimeout = 0;
   loadedModules.length = 0;
+  eventHandlers.clear();
 }
 
 export async function serve(options: ServerOptions = {}) {
@@ -407,6 +447,7 @@ export async function serve(options: ServerOptions = {}) {
     name: options.name || "mcp-server",
     version: options.version || "1.0.0",
   };
+  toolTimeout = options.toolTimeout || 0;
   const decoder = new TextDecoder();
   let buffer = "";
 

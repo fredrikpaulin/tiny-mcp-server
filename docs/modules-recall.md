@@ -65,8 +65,42 @@ Recall exposes `ctx.recall` with the following methods:
 | `get` | `(key: string) => unknown \| null` | Get value or null |
 | `query` | `(pattern: string) => [string, unknown][]` | LIKE query |
 | `delete` | `(key: string) => void` | Remove entry |
+| `namespace` | `(prefix: string) => RecallAPI` | Create a namespaced view |
+| `db` | `() => Database` | Access the underlying SQLite database |
 
 Other modules (like Patterns and Beacon) use this API for their persistence.
+
+## Namespacing
+
+`namespace(prefix)` returns a new `RecallAPI` where all keys are automatically prefixed. This prevents collisions between modules sharing the same database.
+
+```ts
+const ns = ctx.recall.namespace("mymodule");
+ns.set("config", { debug: true });     // stored as "mymodule:config"
+ns.get("config");                       // retrieves "mymodule:config"
+ns.query("%");                          // matches "mymodule:*", returns stripped keys
+ns.delete("config");                    // deletes "mymodule:config"
+```
+
+Namespaces can be nested:
+
+```ts
+const deep = ctx.recall.namespace("patterns").namespace("node");
+deep.set("mcp.ts", { type: "file" });  // stored as "patterns:node:mcp.ts"
+```
+
+Query results from a namespaced API return keys with the prefix stripped, so downstream code doesn't need to know about the prefix.
+
+## Direct Database Access
+
+`db()` returns the underlying `bun:sqlite` `Database` handle. Modules that need custom tables with indexes (like Patterns) can create their own schema while sharing the same `.db` file:
+
+```ts
+const db = ctx.recall.db();
+db.exec(`CREATE TABLE IF NOT EXISTS my_table (id TEXT PRIMARY KEY, data TEXT)`);
+```
+
+The Patterns module uses this to create indexed `patterns_nodes`, `patterns_edges`, and `patterns_notes` tables for fast graph queries.
 
 ## Database Schema
 

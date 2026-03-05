@@ -46,6 +46,9 @@ The `ctx` object passed to `init()`:
 | `validateInput` | Validate data against JSON Schema |
 | `ToolError` | Error class for tool failures |
 | `sample` | Request LLM completion from client |
+| `on(event, handler)` | Subscribe to an event |
+| `off(event, handler)` | Unsubscribe from an event |
+| `emit(event, ...args)` | Emit an event to all subscribers |
 | `[key]` | Any API exposed by earlier modules |
 
 ## Loading Modules
@@ -94,6 +97,41 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 ```
+
+## Events
+
+Modules communicate through a lightweight event bus on the context. Any module can emit events and any module can listen for them.
+
+```ts
+// In a producer module
+init(ctx) {
+  ctx.emit("mymodule:dataChanged", { key: "foo" });
+}
+
+// In a consumer module
+init(ctx) {
+  ctx.on("mymodule:dataChanged", (data) => {
+    console.log("Changed:", data.key);
+  });
+}
+```
+
+Convention: prefix event names with the module name (e.g. `recall:set`, `patterns:nodeAdded`).
+
+### Built-in Events
+
+| Event | Emitted by | Payload |
+|-------|-----------|---------|
+| `recall:set` | Recall | `{ key, value }` |
+| `recall:delete` | Recall | `{ key }` |
+| `patterns:nodeAdded` | Patterns | `{ id, type, name, metadata }` |
+| `patterns:edgeAdded` | Patterns | `{ from, to, relationship, metadata }` |
+| `patterns:noteAdded` | Patterns | `{ entity, note }` |
+| `modules:ready` | Framework | *(none)* |
+
+`modules:ready` fires once after all modules have finished initializing. Use it for work that needs all module APIs to be available — for example, Beacon uses it to build its initial FTS index so it captures any data seeded by other modules during init.
+
+Beacon listens for the data change events above and marks its FTS index as dirty. The index is rebuilt lazily before the next search, so bulk inserts don't trigger repeated reindexing.
 
 ## Error Handling
 

@@ -4,7 +4,7 @@ import { join } from "path";
 const SERVER_PATH = join(import.meta.dir, "..", "examples", "basic.ts");
 
 async function createServer() {
-  const proc = Bun.spawn(["bun", "run", SERVER_PATH], {
+  const proc = Bun.spawn([process.execPath, "run", SERVER_PATH], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

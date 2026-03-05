@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { handleRequest, _reset, loadModules, closeModules } from "../src/mcp";
+import type { ModuleContext } from "../src/mcp";
+import type { RecallAPI } from "../src/modules/recall";
 import recall from "../src/modules/recall";
 
 const rpc = (method: string, params?: unknown) =>
@@ -75,5 +77,74 @@ describe("recall module", () => {
     await callTool("recall_save", { key: "list", value: [1, 2, 3] });
     const result = await callTool("recall_get", { key: "list" });
     expect(result.value).toEqual([1, 2, 3]);
+  });
+});
+
+describe("recall namespace", () => {
+  let api: RecallAPI;
+
+  beforeEach(async () => {
+    _reset();
+    const mod = recall();
+    const ctx = {} as ModuleContext;
+    // Wire up registerTool as a no-op so init works outside loadModules
+    ctx.registerTool = (() => {}) as any;
+    mod.init(ctx);
+    api = ctx.recall as RecallAPI;
+  });
+
+  test("namespaced set/get prefixes keys", () => {
+    const ns = api.namespace("mymod");
+    ns.set("key1", { x: 1 });
+    // Accessible via namespace
+    expect(ns.get("key1")).toEqual({ x: 1 });
+    // Accessible via raw API with full prefix
+    expect(api.get("mymod:key1")).toEqual({ x: 1 });
+    // Not accessible without prefix
+    expect(api.get("key1")).toBeNull();
+  });
+
+  test("namespaced query returns stripped keys", () => {
+    const ns = api.namespace("users");
+    ns.set("alice", { name: "Alice" });
+    ns.set("bob", { name: "Bob" });
+    api.set("other", { name: "Other" });
+
+    const results = ns.query("%");
+    expect(results).toHaveLength(2);
+    // Keys should be stripped of prefix
+    const keys = results.map(([k]) => k);
+    expect(keys).toContain("alice");
+    expect(keys).toContain("bob");
+    expect(keys).not.toContain("users:alice");
+  });
+
+  test("namespaced delete only removes prefixed key", () => {
+    const ns = api.namespace("temp");
+    ns.set("a", 1);
+    api.set("a", 2);
+
+    ns.delete("a");
+    expect(ns.get("a")).toBeNull();
+    expect(api.get("a")).toBe(2); // raw key untouched
+  });
+
+  test("nested namespaces stack prefixes", () => {
+    const deep = api.namespace("level1").namespace("level2");
+    deep.set("val", "hello");
+
+    expect(deep.get("val")).toBe("hello");
+    expect(api.get("level1:level2:val")).toBe("hello");
+    expect(api.namespace("level1").get("level2:val")).toBe("hello");
+  });
+
+  test("namespaces are isolated from each other", () => {
+    const nsA = api.namespace("a");
+    const nsB = api.namespace("b");
+    nsA.set("key", "from-a");
+    nsB.set("key", "from-b");
+
+    expect(nsA.get("key")).toBe("from-a");
+    expect(nsB.get("key")).toBe("from-b");
   });
 });

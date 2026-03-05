@@ -10,6 +10,8 @@ export interface RecallAPI {
   get(key: string): unknown | null;
   query(pattern: string): [string, unknown][];
   delete(key: string): void;
+  namespace(prefix: string): RecallAPI;
+  db(): import("bun:sqlite").Database;
 }
 
 export default function recall(config: { dbPath?: string } = {}) {
@@ -42,10 +44,25 @@ export default function recall(config: { dbPath?: string } = {}) {
         del: db.prepare(`DELETE FROM recall_data WHERE key = ?`),
       };
 
+      function makeNamespaced(root: RecallAPI, prefix: string): RecallAPI {
+        return {
+          set: (key, value) => root.set(`${prefix}:${key}`, value),
+          get: (key) => root.get(`${prefix}:${key}`),
+          query: (pattern) => {
+            const rows = root.query(`${prefix}:${pattern}`);
+            return rows.map(([k, v]) => [k.slice(prefix.length + 1), v]);
+          },
+          delete: (key) => root.delete(`${prefix}:${key}`),
+          namespace: (sub) => makeNamespaced(root, `${prefix}:${sub}`),
+          db: () => root.db(),
+        };
+      }
+
       const api: RecallAPI = {
         set(key, value) {
           const now = Date.now();
           stmts.upsert.run(key, JSON.stringify(value), now, now);
+          ctx.emit?.("recall:set", { key, value });
         },
         get(key) {
           const row = stmts.get.get(key) as { value: string } | null;
@@ -57,7 +74,10 @@ export default function recall(config: { dbPath?: string } = {}) {
         },
         delete(key) {
           stmts.del.run(key);
+          ctx.emit?.("recall:delete", { key });
         },
+        namespace: (prefix) => makeNamespaced(api, prefix),
+        db: () => db,
       };
 
       ctx.recall = api;

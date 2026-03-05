@@ -87,21 +87,41 @@ import { loadModules, serve } from "tiny-mcp-server";
 import recall from "tiny-mcp-server/src/modules/recall";
 import patterns from "tiny-mcp-server/src/modules/patterns";
 import beacon from "tiny-mcp-server/src/modules/beacon";
+import scanner from "tiny-mcp-server/src/modules/scanner";
+import query from "tiny-mcp-server/src/modules/query";
+import graphExport from "tiny-mcp-server/src/modules/export";
+import diff from "tiny-mcp-server/src/modules/diff";
+import stats from "tiny-mcp-server/src/modules/stats";
+import refactor from "tiny-mcp-server/src/modules/refactor";
 
 await loadModules([
   recall({ dbPath: "./data.db" }),
   patterns(),
   beacon(),
+  scanner(),
+  query(),
+  graphExport(),
+  diff(),
+  stats(),
+  refactor(),
 ]);
 
 serve({ name: "my-server", version: "1.0.0" });
 ```
 
+Modules are loaded in dependency order automatically via topological sort.
+
 **Built-in modules:**
 
-- **Recall** — SQLite persistence with key-value storage and pattern queries
-- **Patterns** — Context graph (nodes, edges, notes) for mapping project structure
-- **Beacon** — Fast search across all stored context with scored results
+- **Recall** — SQLite persistence with key-value storage, namespaces, and pattern queries
+- **Patterns** — Context graph (nodes, edges, notes, traversal, shortest path) for mapping project structure
+- **Beacon** — Full-text search across all stored context with BM25 scoring
+- **Scanner** — Directory scanner with JS/TS parser extracting functions, classes, interfaces, imports, calls, side effects, and complexity metrics. Supports watch mode for auto-rescan.
+- **Query** — Predicate-based query engine combining graph traversal and text search with filtering, sorting, and limiting
+- **Export** — Graph export as DOT (Graphviz) or JSON with filtering by node type, relationship, or proximity
+- **Diff** — Snapshot-based graph comparison detecting added, removed, and changed nodes/edges
+- **Stats** — Aggregate metrics: complexity stats, most-connected nodes, hotspot detection, dependency depth
+- **Refactor** — Find all references to a symbol across files and preview rename impact
 
 See [Module Framework](docs/modules.md) for writing your own modules.
 
@@ -118,6 +138,9 @@ See [Module Framework](docs/modules.md) for writing your own modules.
 - [Recall Module](docs/modules-recall.md) — SQLite persistence module
 - [Patterns Module](docs/modules-patterns.md) — Context graph module
 - [Beacon Module](docs/modules-beacon.md) — Context search module
+- [Scanner Module](docs/modules-scanner.md) — Directory scanning and code analysis
+- [Query Module](docs/modules-query.md) — Predicate-based graph queries
+- [Export Module](docs/modules-export.md) — DOT and JSON graph export
 - [AI Agent HOWTO](docs/HOWTO-AI-AGENTS.md) — Step-by-step guide for AI agents implementing a server
 
 ## MCP Client Configuration
