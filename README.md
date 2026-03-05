@@ -1,6 +1,6 @@
 # tiny-mcp-server
 
-A minimal [MCP](https://modelcontextprotocol.io) server implementation for Bun. No dependencies, single file, built-in input validation.
+Modular toolkit for building [MCP](https://modelcontextprotocol.io) servers on Bun — persistent context graph, incremental code scanning, full-text search, and built-in input validation. No dependencies.
 
 ## Install
 
@@ -80,7 +80,7 @@ bun test
 
 ## Module Framework
 
-Compose functionality using reusable modules with automatic dependency resolution. Each module is a factory function that registers tools and exposes APIs to other modules via a shared context.
+Pick the built-in modules you need, drop the ones you don't, and add your own. Each module is a factory function that registers tools and exposes APIs to other modules via a shared context. Dependencies are resolved automatically.
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
@@ -126,7 +126,25 @@ Modules are loaded in dependency order automatically via topological sort.
 - **Refactor** — Find all references to a symbol across files and preview rename impact
 - **Prompt** — Build minimal LLM context from the graph: extracts focus function, dependencies, callers, and types as a compact prompt with token budgeting
 
-See [Module Framework](docs/modules.md) for writing your own modules.
+**Custom modules** can depend on any built-in module and access its API through the shared context. For example, a module that stores data in Recall or adds nodes to the Patterns graph only needs to declare the dependency:
+
+```ts
+export default function myModule() {
+  return {
+    name: "my-module",
+    depends: ["recall", "patterns"],
+    init(ctx) {
+      ctx.registerTool("my_tool", "Does something useful", schema, async (args) => {
+        ctx.recall.set("my-ns", args.key, args.value);
+        ctx.patterns.addNode({ id: args.id, type: "custom", metadata: {} });
+        return { ok: true };
+      });
+    },
+  };
+}
+```
+
+See [Module Framework](docs/modules.md) for the full guide.
 
 ## Documentation
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2
+
+### Changed
+- **README**: Rewritten intro to clarify that tiny-mcp-server is a toolkit for building MCP servers, not a server itself. Module Framework section now highlights pick-and-choose composability and includes a custom module example showing how to extend built-in modules like Recall and Patterns.
+- **package.json**: Updated description to match.
+- **HOWTO-AI-AGENTS**: Minor wording update for consistency.
+
 ## 0.4.1
 
 ### Fixed

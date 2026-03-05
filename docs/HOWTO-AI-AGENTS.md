@@ -1,6 +1,6 @@
 # HOWTO: Implement tiny-mcp-server in an AI Agent Project
 
-This guide is written for AI agents (Claude, GPT, Codex, etc.) that are asked to build an MCP server using tiny-mcp-server. It covers the full implementation path: setup, tool design, error handling, validation, resources, sampling, and testing.
+This guide is written for AI agents (Claude, GPT, Codex, etc.) that are asked to build an MCP server using the tiny-mcp-server toolkit. It covers the full implementation path: setup, tool design, error handling, validation, resources, sampling, and testing.
 
 ## Prerequisites
 
