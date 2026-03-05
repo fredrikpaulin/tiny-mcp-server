@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+### Fixed
+- **Package distribution**: Added missing `src/analyzer/lexer.js` and `src/analyzer/tokens.js` to `files` array in `package.json`. The parser depends on both but they were excluded from the published package.
+
 ## 0.4.0
 
 ### Added
