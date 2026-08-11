@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.3
+
+Maintenance release addressing a codebase audit. No new features; the public tool surface is unchanged.
+
+### Fixed
+- **Analyzer exports**: `./analyzer/*` advertised an `analyze.js` orchestrator that imported analysis modules which don't exist in the package, so `import("tiny-mcp-server/analyzer/analyze")` half-resolved and then crashed at runtime. Narrowed the export map to the four supported files (`parser`, `ast`, `lexer`, `tokens`) and removed the broken orchestrator and its orphaned `analysis/` directory.
+- **Scanner left stale graph state behind**: rescans only skipped unchanged files; they never removed nodes and edges for code that had been deleted. The scanner now records the node/edge slice each file produces, deletes the previous slice before inserting the new one, and sweeps files that disappeared from disk. Each file's update runs in a SQLite transaction. `ScanResult` gains `dir` and `removed`.
+- **Import resolution guessed `.ts`** without checking the filesystem, producing wrong graph edges for JS/JSX/TSX and directory-index imports. `resolveImportSource` now verifies the target exists across `.ts/.tsx/.js/.jsx` and `index.*` before creating an edge, and creates no edge when the import can't be resolved.
+- **Prompt base directory was dead code**: the scanned directory was never recorded, so `prompt_build` often read against an empty base path. The scanner now reports `dir` in `scanner:complete` and prompt stores it.
+- **Resource template matching** left literal regex characters (`.`, `+`, `(`, …) active. `registerResourceTemplate` escapes literal segments and captures only `{var}` placeholders.
+- **Failed module loads** left already-initialized modules running. `loadModules` now closes them in reverse order before rethrowing.
+
+### Changed
+- **TypeScript is a real gate now**: added Bun types to `tsconfig.json`, a `.d.ts` contract for the JS analyzer AST (`parser`/`ast`), and a `typecheck` script. `tsc --noEmit` runs clean instead of failing on missing globals and `never`-typed parser output.
+- **Beacon indexes incrementally**: mutations queue per-document upserts and deletes that flush before the next search, instead of clearing and rebuilding the whole FTS corpus on any change. Edge events no longer dirty the index. `beacon_reindex` still does a full rebuild for repair.
+- **Graph traversal** uses head-pointer queues instead of `Array.shift()` in `patterns.traverse`/`shortestPath` and `stats.compute`; `prompt.collectRelated` builds an adjacency index once per call instead of scanning the full edge list per frontier node.
+- **Bun-native replacements**: ESM `node:fs` import for the watcher (was `require("fs")`), `Uint8Array#toBase64()` (was `Buffer.from(...).toString("base64")`), `Bun.env` in the example resource template.
+- **Docs**: module import examples use the public `tiny-mcp-server/modules/*` subpath instead of the private `src/...` path that the `exports` map blocks.
+
+### Added
+- `PatternsAPI` gains `deleteNode` and `deleteEdge`, emitting `patterns:nodeRemoved` / `patterns:edgeRemoved`.
+- Tests: scanner incremental cleanup and import resolution (5), incremental beacon indexing (4), resource-template escaping and module-load rollback (3).
+
 ## 0.4.2
 
 ### Changed

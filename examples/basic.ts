@@ -29,7 +29,7 @@ registerResourceTemplate(
   "Environment Variable",
   "Read an environment variable",
   "text/plain",
-  async ({ name }) => process.env[name!] || ""
+  async ({ name }) => Bun.env[name!] || ""
 );
 
 // Example tool using sampling: summarize

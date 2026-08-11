@@ -6,9 +6,9 @@ FTS5-powered context search for tiny-mcp-server. Searches across Recall data, Pa
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import beacon from "tiny-mcp-server/src/modules/beacon";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import beacon from "tiny-mcp-server/modules/beacon";
 
 await loadModules([
   recall({ dbPath: "./context.db" }),
@@ -57,9 +57,9 @@ Returns scored results with timing telemetry:
 
 ### `beacon_reindex`
 
-Manually rebuild the search index. Normally not needed — Beacon listens for data change events (`recall:set`, `recall:delete`, `patterns:nodeAdded`, etc.) and automatically marks the index as dirty. The index is rebuilt lazily before the next search.
+Force a full rebuild of the search index. Normally not needed. Beacon builds the index once (on `modules:ready`, or before the first search, which also captures data persisted to disk that never fired an event), then keeps it current incrementally: it listens for data change events (`recall:set`, `recall:delete`, `patterns:nodeAdded`, `patterns:nodeRemoved`, `patterns:noteAdded`) and queues per-document upserts and deletes that are flushed before the next search. One small write costs one small index update, not a full corpus rebuild. Edge events are ignored because edges aren't indexed as searchable documents.
 
-Use `beacon_reindex` when you want to force an immediate rebuild, or if you've modified data outside the normal module APIs.
+Use `beacon_reindex` to force an immediate full rebuild — for example, if you've modified data outside the normal module APIs.
 
 ```json
 {}

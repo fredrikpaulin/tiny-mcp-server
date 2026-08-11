@@ -81,10 +81,27 @@ export function registerResource(uri: string, name: string, description: string,
   resources.set(uri, { name, description, mimeType, handler });
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function registerResourceTemplate(uriTemplate: string, name: string, description: string, mimeType: string, handler: ResourceTemplateHandler) {
+  // Build the matcher by escaping literal segments and turning only {var}
+  // placeholders into capture groups, so literal regex characters in the URI
+  // (., +, ?, parentheses) match literally instead of acting as operators.
   const vars: string[] = [];
-  const pattern = new RegExp("^" + uriTemplate.replace(/\{([^}]+)\}/g, (_, v) => (vars.push(v), "(.+)")) + "$");
-  resourceTemplates.set(uriTemplate, { name, description, mimeType, pattern, vars, handler });
+  const placeholder = /\{([^}]+)\}/g;
+  let pattern = "^";
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = placeholder.exec(uriTemplate)) !== null) {
+    pattern += escapeRegex(uriTemplate.slice(lastIndex, m.index));
+    vars.push(m[1]!);
+    pattern += "(.+)";
+    lastIndex = m.index + m[0].length;
+  }
+  pattern += escapeRegex(uriTemplate.slice(lastIndex)) + "$";
+  resourceTemplates.set(uriTemplate, { name, description, mimeType, pattern: new RegExp(pattern), vars, handler });
 }
 
 interface ServerOptions {
@@ -161,7 +178,7 @@ function formatResourceContent(uri: string, mimeType: string, data: string | Uin
   if (typeof data === "string") {
     return { uri, mimeType, text: data };
   }
-  return { uri, mimeType, blob: Buffer.from(data).toString("base64") };
+  return { uri, mimeType, blob: data.toBase64() };
 }
 
 export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) => void): Promise<JsonRpcResponse> {
@@ -413,6 +430,15 @@ export async function loadModules(modules: ModuleMetadata[]) {
     try {
       await mod.init(ctx);
     } catch (e) {
+      // Roll back: close already-initialized modules in reverse order so a
+      // failed load doesn't leak open databases, handlers, or file watchers.
+      for (const loaded of [...loadedModules].reverse()) {
+        if (loaded.close) {
+          try { await loaded.close(); }
+          catch (closeErr) { log(`Close error during rollback [${loaded.name}]:`, closeErr); }
+        }
+      }
+      loadedModules.length = 0;
       throw new Error(`Failed to initialize module "${mod.name}": ${e instanceof Error ? e.message : String(e)}`);
     }
     loadedModules.push(mod);
@@ -429,7 +455,12 @@ export async function closeModules() {
   loadedModules.length = 0;
 }
 
-/** Reset all registrations. For testing only. */
+/**
+ * Reset all registrations. For testing only.
+ * This clears registration state but does NOT run module close() hooks — use
+ * closeModules() for lifecycle cleanup. Tests that load real modules should
+ * call closeModules() before _reset() if a module holds resources.
+ */
 export function _reset() {
   tools.clear();
   resources.clear();

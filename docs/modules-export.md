@@ -6,9 +6,9 @@ Exports the Patterns context graph as DOT (Graphviz) or JSON. Supports filtering
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import graphExport from "tiny-mcp-server/src/modules/export";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import graphExport from "tiny-mcp-server/modules/export";
 
 await loadModules([
   recall({ dbPath: "./context.db" }),

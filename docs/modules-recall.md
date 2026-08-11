@@ -6,7 +6,7 @@ SQLite-based key-value persistence for tiny-mcp-server. Stores JSON values with 
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
+import recall from "tiny-mcp-server/modules/recall";
 
 await loadModules([recall({ dbPath: "./data.db" })]);
 serve();

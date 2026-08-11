@@ -1,14 +1,14 @@
 # Scanner Module
 
-Auto-populates the Patterns graph by walking a directory and parsing JS/TS files. Extracts files, functions, classes, interfaces, type aliases, variables, import relationships, call edges, side effects, and class methods. Incremental — tracks file hashes to skip unchanged files on rescan.
+Auto-populates the Patterns graph by walking a directory and parsing JS/TS files. Extracts files, functions, classes, interfaces, type aliases, variables, import relationships, call edges, side effects, and class methods. Incremental — tracks file hashes to skip unchanged files on rescan, and deletes the graph state for files that changed or were removed so queries never see code that no longer exists.
 
 ## Setup
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import scanner from "tiny-mcp-server/src/modules/scanner";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import scanner from "tiny-mcp-server/modules/scanner";
 
 await loadModules([
   recall({ dbPath: "./context.db" }),
@@ -39,9 +39,11 @@ Scan a directory to populate the context graph.
 Returns:
 ```json
 {
+  "dir": "/path/to/project/src",
   "files": 13,
   "parsed": 13,
   "skipped": 0,
+  "removed": 0,
   "errors": [],
   "nodes": 342,
   "edges": 2073,
@@ -50,6 +52,8 @@ Returns:
   "timing_ms": 47.11
 }
 ```
+
+`removed` counts files that were in the cache but no longer exist on disk; their graph slice is deleted during the scan. `dir` echoes the scanned directory and is also used by the Prompt module to resolve source files.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -95,6 +99,10 @@ The scanner resolves calls across files by matching the callee name against impo
 ## Incremental Scanning
 
 Scanner stores a hash of each file's contents in Recall (namespaced under `scanner:hash:{path}`). On subsequent scans, files with matching hashes are skipped. Use `force: true` to override.
+
+Alongside the hash, the scanner stores the set of node and edge IDs each file produced (`scanner:slice:{path}`). When a file is reparsed, the scanner upserts the new slice and then deletes whatever the previous slice contained but the new one doesn't — so removing a function, class, or import drops the corresponding nodes and edges instead of leaving them behind. User-set node `boost` survives because surviving nodes are upserted, not deleted and recreated. Files that have a cached slice but were not seen during the scan are treated as deleted and their slice is removed entirely (counted in `removed`). Each file's update runs inside a SQLite transaction.
+
+This relies on rescanning the same root directory; the cache is keyed by paths relative to the scanned directory.
 
 ## File Discovery
 

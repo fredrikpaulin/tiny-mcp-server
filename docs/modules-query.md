@@ -6,10 +6,10 @@ Combines Patterns graph traversal with Beacon full-text search for predicate-bas
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import beacon from "tiny-mcp-server/src/modules/beacon";
-import query from "tiny-mcp-server/src/modules/query";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import beacon from "tiny-mcp-server/modules/beacon";
+import query from "tiny-mcp-server/modules/query";
 
 await loadModules([
   recall({ dbPath: "./context.db" }),

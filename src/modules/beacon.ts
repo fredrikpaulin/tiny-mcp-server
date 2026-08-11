@@ -86,6 +86,8 @@ export default function beacon(config: { maxResults?: number } = {}) {
         clearTri: db.prepare(`DELETE FROM beacon_tri`),
         insertFts: db.prepare(`INSERT INTO beacon_fts (key, type, title, description) VALUES (?, ?, ?, ?)`),
         insertTri: db.prepare(`INSERT INTO beacon_tri (key, type, title, description) VALUES (?, ?, ?, ?)`),
+        deleteFtsByKey: db.prepare(`DELETE FROM beacon_fts WHERE key = ?`),
+        deleteTriByKey: db.prepare(`DELETE FROM beacon_tri WHERE key = ?`),
         searchFts: db.prepare(`
           SELECT key, type, (-rank) as fts_score,
             highlight(beacon_fts, 2, '<mark>', '</mark>') as title_hl,
@@ -107,55 +109,107 @@ export default function beacon(config: { maxResults?: number } = {}) {
         getNodeBoost: db.prepare(`SELECT boost FROM patterns_nodes WHERE id = ?`),
       };
 
+      function indexDoc(key: string, type: string, title: string, desc: string) {
+        stmts.insertFts.run(key, type, title, desc);
+        stmts.insertTri.run(key, type, title, desc);
+      }
+
+      function removeDoc(key: string) {
+        stmts.deleteFtsByKey.run(key);
+        stmts.deleteTriByKey.run(key);
+      }
+
+      function upsertDoc(key: string, type: string, title: string, desc: string) {
+        removeDoc(key);
+        indexDoc(key, type, title, desc);
+      }
+
+      function recallDesc(value: unknown): string {
+        return typeof value === "string" ? value : (typeof value === "object" && value !== null ? JSON.stringify(value) : "");
+      }
+
+      // Full rebuild — used for the initial build (captures persisted data that
+      // never fired an event) and for explicit repair via beacon_reindex.
       function reindex() {
         stmts.clearFts.run();
         stmts.clearTri.run();
 
-        // Index pattern nodes
         const nodes = patterns.query({}) as { id: string; type: string; name: string }[];
         for (const node of nodes) {
           const meta = patterns.getNode(node.id)?.metadata;
-          const desc = meta?.description ? String(meta.description) : "";
-          stmts.insertFts.run(node.id, node.type, node.name, desc);
-          stmts.insertTri.run(node.id, node.type, node.name, desc);
+          indexDoc(node.id, node.type, node.name, meta?.description ? String(meta.description) : "");
         }
 
-        // Index notes
         const noteRows = db.prepare(`SELECT entity, text FROM patterns_notes`).all() as { entity: string; text: string }[];
-        for (const n of noteRows) {
-          stmts.insertFts.run(`note:${n.entity}`, "note", n.entity, n.text);
-          stmts.insertTri.run(`note:${n.entity}`, "note", n.entity, n.text);
+        for (const n of noteRows) indexDoc(`note:${n.entity}`, "note", n.entity, n.text);
+
+        for (const [key, value] of recall.query("%")) {
+          if (key.startsWith("patterns:")) continue; // pattern nodes indexed above
+          indexDoc(key, "recall", key, recallDesc(value));
         }
 
-        // Index recall keys
-        const recallRows = recall.query("%");
-        for (const [key, value] of recallRows) {
-          // Skip patterns internal data — already indexed above
-          if (key.startsWith("patterns:")) continue;
-          const title = key;
-          const desc = typeof value === "string" ? value : (typeof value === "object" && value !== null ? JSON.stringify(value) : "");
-          stmts.insertFts.run(key, "recall", title, desc);
-          stmts.insertTri.run(key, "recall", title, desc);
-        }
+        indexed = true;
+        pendingUpserts.clear();
+        pendingDeletes.clear();
+        pendingNotes.clear();
       }
 
-      // Dirty flag — when data changes, mark index stale and reindex lazily before next search
-      // Start dirty so index is built on first search if modules:ready hasn't fired yet
-      let dirty = true;
-      function markDirty() { dirty = true; }
+      // Incremental indexing. Mutations accumulate as pending work and are
+      // flushed (per-document upsert/delete) before the next search, so one
+      // small write costs one small index update instead of a full rebuild.
+      let indexed = false;
+      const pendingUpserts = new Map<string, { type: string; title: string; desc: string }>();
+      const pendingDeletes = new Set<string>();
+      const pendingNotes = new Set<string>();
 
-      // Build initial index once all modules are ready (captures data seeded during init)
-      ctx.on("modules:ready", () => { reindex(); dirty = false; });
+      function ensureIndexed() { if (!indexed) reindex(); }
 
-      ctx.on("patterns:nodeAdded", markDirty);
-      ctx.on("patterns:edgeAdded", markDirty);
-      ctx.on("patterns:noteAdded", markDirty);
-      ctx.on("recall:set", markDirty);
-      ctx.on("recall:delete", markDirty);
+      function flush() {
+        if (!pendingDeletes.size && !pendingUpserts.size && !pendingNotes.size) return;
+        for (const key of pendingDeletes) removeDoc(key);
+        for (const [key, d] of pendingUpserts) upsertDoc(key, d.type, d.title, d.desc);
+        for (const entity of pendingNotes) {
+          removeDoc(`note:${entity}`);
+          for (const n of patterns.getNotes(entity)) indexDoc(`note:${entity}`, "note", entity, n.text);
+        }
+        pendingDeletes.clear();
+        pendingUpserts.clear();
+        pendingNotes.clear();
+      }
+
+      // Build the index once modules are ready (captures data seeded during init)
+      ctx.on("modules:ready", () => { ensureIndexed(); });
+
+      // Edges are not indexed as searchable documents, so edge events are ignored.
+      ctx.on("patterns:nodeAdded", (p: any) => {
+        if (!indexed) return;
+        pendingDeletes.delete(p.id);
+        pendingUpserts.set(p.id, { type: p.type, title: p.name, desc: p.metadata?.description ? String(p.metadata.description) : "" });
+      });
+      ctx.on("patterns:nodeRemoved", (p: any) => {
+        if (!indexed) return;
+        pendingUpserts.delete(p.id);
+        pendingDeletes.add(p.id);
+      });
+      ctx.on("patterns:noteAdded", (p: any) => {
+        if (!indexed) return;
+        pendingNotes.add(p.entity);
+      });
+      ctx.on("recall:set", (p: any) => {
+        if (!indexed || typeof p.key !== "string" || p.key.startsWith("patterns:")) return;
+        pendingDeletes.delete(p.key);
+        pendingUpserts.set(p.key, { type: "recall", title: p.key, desc: recallDesc(p.value) });
+      });
+      ctx.on("recall:delete", (p: any) => {
+        if (!indexed || typeof p.key !== "string") return;
+        pendingUpserts.delete(p.key);
+        pendingDeletes.add(p.key);
+      });
 
       const api: BeaconAPI = {
         search(query, opts) {
-          if (dirty) { reindex(); dirty = false; }
+          ensureIndexed();
+          flush();
           const t0 = performance.now();
           const max = opts?.maxResults || maxDefault;
           const types = opts?.types;

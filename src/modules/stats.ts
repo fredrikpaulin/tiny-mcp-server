@@ -94,8 +94,9 @@ export default function stats() {
         for (const root of fileNodes) {
           const visited = new Set<string>();
           const queue: { id: string; depth: number }[] = [{ id: root.id, depth: 0 }];
-          while (queue.length) {
-            const { id, depth } = queue.shift()!;
+          let head = 0;
+          while (head < queue.length) {
+            const { id, depth } = queue[head++]!;
             if (visited.has(id)) continue;
             visited.add(id);
             if (depth > maxDepth) maxDepth = depth;

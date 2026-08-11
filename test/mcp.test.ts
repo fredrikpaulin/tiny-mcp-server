@@ -284,7 +284,7 @@ describe("registerTool", () => {
 
 describe("resource template pattern matching", () => {
   test("does not match partial URIs", async () => {
-    registerResourceTemplate("file://{path}", "File", "File access", "text/plain", async ({ path }) => path);
+    registerResourceTemplate("file://{path}", "File", "File access", "text/plain", async ({ path }) => path ?? "");
 
     // Exact structure match
     const good = await rpc("resources/read", { uri: "file://test.txt" });
@@ -292,7 +292,7 @@ describe("resource template pattern matching", () => {
   });
 
   test("matches greedily within capture groups", async () => {
-    registerResourceTemplate("path://{full}", "Path", "Full path", "text/plain", async ({ full }) => full);
+    registerResourceTemplate("path://{full}", "Path", "Full path", "text/plain", async ({ full }) => full ?? "");
 
     const res = await rpc("resources/read", { uri: "path://a/b/c" });
     expect((res.result as any).contents[0].text).toBe("a/b/c");
@@ -365,14 +365,14 @@ describe("validateInput", () => {
     const schema = { type: "object", properties: { x: { type: "number" } } };
     const errors = validateInput(schema, { x: "not a number" });
     expect(errors).toHaveLength(1);
-    expect(errors[0].path).toBe("x");
-    expect(errors[0].message).toContain("expected number");
+    expect(errors[0]!.path).toBe("x");
+    expect(errors[0]!.message).toContain("expected number");
   });
 
   test("wrong type number vs string", () => {
     const schema = { type: "object", properties: { x: { type: "string" } } };
     const errors = validateInput(schema, { x: 42 });
-    expect(errors[0].message).toContain("expected string");
+    expect(errors[0]!.message).toContain("expected string");
   });
 
   test("integer type rejects float", () => {
@@ -403,8 +403,8 @@ describe("validateInput", () => {
     const schema = { type: "object", properties: { fmt: { type: "string", enum: ["json", "xml"] } } };
     const errors = validateInput(schema, { fmt: "csv" });
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain("json");
-    expect(errors[0].message).toContain("xml");
+    expect(errors[0]!.message).toContain("json");
+    expect(errors[0]!.message).toContain("xml");
   });
 
   test("enum passes valid value", () => {
@@ -432,7 +432,7 @@ describe("validateInput", () => {
     const schema = { type: "object", properties: { tags: { type: "array", items: { type: "string" } } } };
     const errors = validateInput(schema, { tags: ["ok", 42, "fine"] });
     expect(errors).toHaveLength(1);
-    expect(errors[0].path).toBe("tags[1]");
+    expect(errors[0]!.path).toBe("tags[1]");
   });
 
   test("minLength and maxLength", () => {

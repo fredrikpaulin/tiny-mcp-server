@@ -1,6 +1,6 @@
 {
   "name": "tiny-mcp-server",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Modular toolkit for building MCP servers on Bun — persistent context graph, incremental code scanning, full-text search, and built-in input validation",
   "author": "Fredrik Paulin <fredrik@rymdskepp.com>",
   "license": "MIT",
@@ -13,6 +13,10 @@
     "claude"
   ],
   "type": "module",
+  "scripts": {
+    "test": "bun test test/",
+    "typecheck": "tsc --noEmit"
+  },
   "main": "src/index.ts",
   "module": "src/index.ts",
   "types": "src/index.ts",
@@ -20,7 +24,10 @@
     ".": "./src/index.ts",
     "./mcp": "./src/mcp.ts",
     "./modules/*": "./src/modules/*.ts",
-    "./analyzer/*": "./src/analyzer/*.js"
+    "./analyzer/parser": "./src/analyzer/parser.js",
+    "./analyzer/ast": "./src/analyzer/ast.js",
+    "./analyzer/lexer": "./src/analyzer/lexer.js",
+    "./analyzer/tokens": "./src/analyzer/tokens.js"
   },
   "files": [
     "src/mcp.ts",
@@ -36,7 +43,9 @@
     "src/modules/refactor.ts",
     "src/modules/prompt.ts",
     "src/analyzer/parser.js",
+    "src/analyzer/parser.d.ts",
     "src/analyzer/ast.js",
+    "src/analyzer/ast.d.ts",
     "src/analyzer/lexer.js",
     "src/analyzer/tokens.js",
     "README.md",

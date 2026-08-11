@@ -55,9 +55,9 @@ The `ctx` object passed to `init()`:
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import beacon from "tiny-mcp-server/src/modules/beacon";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import beacon from "tiny-mcp-server/modules/beacon";
 
 await loadModules([
   recall({ dbPath: "./data.db" }),

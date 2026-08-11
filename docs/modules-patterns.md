@@ -6,8 +6,8 @@ Context graph builder for tiny-mcp-server. Creates a queryable graph of nodes (f
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
 
 await loadModules([recall({ dbPath: "./context.db" }), patterns()]);
 serve();
@@ -148,8 +148,10 @@ Patterns exposes `ctx.patterns`:
 
 | Method | Description |
 |--------|-------------|
-| `addNode(id, type, name, metadata?)` | Add graph node |
+| `addNode(id, type, name, metadata?)` | Add graph node (upsert; preserves `boost`) |
 | `addEdge(from, to, relationship, metadata?)` | Add edge |
+| `deleteNode(id)` | Remove a node and every edge that references it |
+| `deleteEdge(from, to, relationship)` | Remove a single edge |
 | `getNode(id)` | Get single node |
 | `getEdges(nodeId)` | Get all edges for a node |
 | `query({ type?, relationship?, nodeId? })` | Flexible query |

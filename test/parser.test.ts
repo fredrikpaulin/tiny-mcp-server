@@ -53,8 +53,8 @@ describe("lexer: regex flags", () => {
 describe("ast: findById cache", () => {
   test("getFunction returns correct function by id", () => {
     const { ast } = parse(`function foo() {} function bar() {}`);
-    const fn0 = ast.functions[0];
-    const fn1 = ast.functions[1];
+    const fn0 = ast.functions[0]!;
+    const fn1 = ast.functions[1]!;
     expect(getFunction(ast, fn0.id)?.name).toBe("foo");
     expect(getFunction(ast, fn1.id)?.name).toBe("bar");
   });
@@ -62,8 +62,8 @@ describe("ast: findById cache", () => {
   test("getCall returns correct call by id", () => {
     const { ast } = parse(`console.log("a"); process.exit(1);`);
     if (ast.calls.length >= 2) {
-      const c0 = ast.calls[0];
-      const c1 = ast.calls[1];
+      const c0 = ast.calls[0]!;
+      const c1 = ast.calls[1]!;
       expect(getCall(ast, c0.id)).toBeTruthy();
       expect(getCall(ast, c1.id)).toBeTruthy();
     }
@@ -81,7 +81,7 @@ describe("ast: sentinel value for id 0", () => {
   test("first function has id 0 or valid id and is retrievable", () => {
     // The first module gets id 0, first function gets id based on storage
     const { ast } = parse(`function first() {}`);
-    const fn = ast.functions[0];
+    const fn = ast.functions[0]!;
     expect(fn).toBeTruthy();
     expect(getFunction(ast, fn.id)?.name).toBe("first");
   });
@@ -136,14 +136,14 @@ describe("parser: optional chaining in call chains", () => {
     const { ast } = parse(`foo?.bar();`);
     const call = ast.calls.find((c: any) => c.callee === "foo");
     expect(call).toBeTruthy();
-    expect(call.fullChain).toBe("foo?.bar");
+    expect(call!.fullChain).toBe("foo?.bar");
   });
 
   test("a?.b?.c preserves both ?. markers", () => {
     const { ast } = parse(`a?.b?.c();`);
     const call = ast.calls.find((c: any) => c.callee === "a");
     expect(call).toBeTruthy();
-    const markers = (call.fullChain.match(/\?\./g) || []).length;
+    const markers = (call!.fullChain.match(/\?\./g) || []).length;
     expect(markers).toBe(2);
   });
 
@@ -151,7 +151,7 @@ describe("parser: optional chaining in call chains", () => {
     const { ast } = parse(`a.b?.c.d();`);
     const call = ast.calls.find((c: any) => c.callee === "a");
     expect(call).toBeTruthy();
-    expect(call.fullChain).toBe("a.b?.c.d");
+    expect(call!.fullChain).toBe("a.b?.c.d");
   });
 });
 

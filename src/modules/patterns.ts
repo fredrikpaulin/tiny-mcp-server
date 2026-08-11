@@ -38,6 +38,8 @@ export interface PathResult {
 export interface PatternsAPI {
   addNode(id: string, type: string, name: string, metadata?: Record<string, unknown>): void;
   addEdge(from: string, to: string, relationship: string, metadata?: Record<string, unknown>): void;
+  deleteNode(id: string): void;
+  deleteEdge(from: string, to: string, relationship: string): void;
   getNode(id: string): PatternsNode | null;
   getEdges(nodeId: string): PatternsEdge[];
   query(opts: { type?: string; relationship?: string; nodeId?: string }): unknown[];
@@ -109,6 +111,9 @@ export default function patterns() {
         insertNote: db.prepare(`INSERT INTO patterns_notes (entity, text, timestamp) VALUES (?, ?, ?)`),
         notesByEntity: db.prepare(`SELECT text, timestamp FROM patterns_notes WHERE entity = ? ORDER BY timestamp ASC`),
         allEdges: db.prepare(`SELECT src, dst, relationship, metadata FROM patterns_edges`),
+        deleteNode: db.prepare(`DELETE FROM patterns_nodes WHERE id = ?`),
+        deleteEdgesByEndpoint: db.prepare(`DELETE FROM patterns_edges WHERE src = ? OR dst = ?`),
+        deleteEdge: db.prepare(`DELETE FROM patterns_edges WHERE src = ? AND dst = ? AND relationship = ?`),
       };
 
       function parseNode(row: { id: string; type: string; name: string; boost: number; metadata: string | null }): PatternsNode {
@@ -130,8 +135,19 @@ export default function patterns() {
           ctx.emit?.("patterns:edgeAdded", { from, to, relationship, metadata });
         },
 
+        deleteNode(id) {
+          stmts.deleteNode.run(id);
+          stmts.deleteEdgesByEndpoint.run(id, id);
+          ctx.emit?.("patterns:nodeRemoved", { id });
+        },
+
+        deleteEdge(from, to, relationship) {
+          stmts.deleteEdge.run(from, to, relationship);
+          ctx.emit?.("patterns:edgeRemoved", { from, to, relationship });
+        },
+
         getNode(id) {
-          const row = stmts.getNode.get(id) as { id: string; type: string; name: string; metadata: string | null } | null;
+          const row = stmts.getNode.get(id) as { id: string; type: string; name: string; boost: number; metadata: string | null } | null;
           return row ? parseNode(row) : null;
         },
 
@@ -223,14 +239,16 @@ export default function patterns() {
             return results;
           }
 
-          // BFS or DFS
+          // BFS or DFS. BFS reads from a head pointer instead of Array.shift()
+          // so dequeue is O(1); DFS pops from the tail.
           const frontier: { id: string; depth: number }[] = [{ id: startId, depth: 0 }];
+          let head = 0;
           visited.add(startId);
           const startNode = api.getNode(startId);
           if (startNode) nodeMap.set(startId, startNode);
 
-          while (frontier.length > 0) {
-            const current = mode === "bfs" ? frontier.shift()! : frontier.pop()!;
+          while (head < frontier.length) {
+            const current = mode === "bfs" ? frontier[head++]! : frontier.pop()!;
             if (current.depth > deepest) deepest = current.depth;
             if (current.depth >= maxDepth) continue;
 
@@ -258,10 +276,11 @@ export default function patterns() {
           const visited = new Set<string>();
           const parent = new Map<string, { nodeId: string; edge: PatternsEdge }>();
           const queue: string[] = [fromId];
+          let head = 0;
           visited.add(fromId);
 
-          while (queue.length > 0) {
-            const current = queue.shift()!;
+          while (head < queue.length) {
+            const current = queue[head++]!;
             if (current === toId) {
               // Reconstruct path
               const pathNodes: PatternsNode[] = [];

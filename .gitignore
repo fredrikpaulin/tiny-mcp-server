@@ -35,8 +35,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 .cursor
 CLAUDE.md
-
+AGENTS.md
 not-yet-implemented
 
 reference_material
 agents/
+project/

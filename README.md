@@ -84,16 +84,16 @@ Pick the built-in modules you need, drop the ones you don't, and add your own. E
 
 ```ts
 import { loadModules, serve } from "tiny-mcp-server";
-import recall from "tiny-mcp-server/src/modules/recall";
-import patterns from "tiny-mcp-server/src/modules/patterns";
-import beacon from "tiny-mcp-server/src/modules/beacon";
-import scanner from "tiny-mcp-server/src/modules/scanner";
-import query from "tiny-mcp-server/src/modules/query";
-import graphExport from "tiny-mcp-server/src/modules/export";
-import diff from "tiny-mcp-server/src/modules/diff";
-import stats from "tiny-mcp-server/src/modules/stats";
-import refactor from "tiny-mcp-server/src/modules/refactor";
-import prompt from "tiny-mcp-server/src/modules/prompt";
+import recall from "tiny-mcp-server/modules/recall";
+import patterns from "tiny-mcp-server/modules/patterns";
+import beacon from "tiny-mcp-server/modules/beacon";
+import scanner from "tiny-mcp-server/modules/scanner";
+import query from "tiny-mcp-server/modules/query";
+import graphExport from "tiny-mcp-server/modules/export";
+import diff from "tiny-mcp-server/modules/diff";
+import stats from "tiny-mcp-server/modules/stats";
+import refactor from "tiny-mcp-server/modules/refactor";
+import prompt from "tiny-mcp-server/modules/prompt";
 
 await loadModules([
   recall({ dbPath: "./data.db" }),

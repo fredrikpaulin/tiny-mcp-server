@@ -238,7 +238,9 @@ export default function prompt() {
         return { focus: node.id, sections, tokenEstimate: totalTokens, prompt: promptText };
       }
 
-      // Collect related node IDs by following edges in a direction
+      // Collect related node IDs by following edges in a direction. Builds an
+      // adjacency index for the relevant relationships once, then walks it,
+      // instead of rescanning the full edge list for every frontier node.
       function collectRelated(
         startId: string,
         edges: PatternsEdge[],
@@ -246,6 +248,17 @@ export default function prompt() {
         relationships: string[],
         maxDepth: number
       ): string[] {
+        const relSet = new Set(relationships);
+        const adjacency = new Map<string, string[]>();
+        for (const e of edges) {
+          if (!relSet.has(e.relationship)) continue;
+          const key = direction === "outgoing" ? e.from : e.to;
+          const target = direction === "outgoing" ? e.to : e.from;
+          let list = adjacency.get(key);
+          if (!list) { list = []; adjacency.set(key, list); }
+          list.push(target);
+        }
+
         const result: string[] = [];
         const visited = new Set<string>([startId]);
         let frontier = [startId];
@@ -253,12 +266,8 @@ export default function prompt() {
         for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
           const next: string[] = [];
           for (const id of frontier) {
-            for (const e of edges) {
-              if (!relationships.includes(e.relationship)) continue;
-              const target = direction === "outgoing"
-                ? (e.from === id ? e.to : null)
-                : (e.to === id ? e.from : null);
-              if (target && !visited.has(target)) {
+            for (const target of adjacency.get(id) || []) {
+              if (!visited.has(target)) {
                 visited.add(target);
                 result.push(target);
                 next.push(target);
@@ -331,10 +340,10 @@ export default function prompt() {
       const api: PromptAPI = { build };
       ctx.prompt = api;
 
-      // Listen for scanner events to track the base directory
+      // Track the last scanned directory so prompt_build can resolve source
+      // files without the caller having to pass baseDir every time.
       ctx.on?.("scanner:complete", (summary: any) => {
-        // The scanner doesn't emit the dir directly, but we store it
-        // when the scan tool is called.
+        if (summary?.dir) cache.set("lastScanDir", summary.dir);
       });
 
       ctx.registerTool(
