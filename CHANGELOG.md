@@ -1,6 +1,55 @@
 # Changelog
 
+## 0.5.0
+
+First release since 0.4.2. Versions 0.4.3 through 0.4.6 exist in this changelog but were never published to npm, so everything under them ships here. Their sections are kept below as the detail; this entry is what changed for anyone upgrading from 0.4.2.
+
+The bulk of it came out of two codebase audits, in May and August 2026. Measured on a 1,001-file project: the first `beacon_search` after a scan went from 45.6 s to 93 ms, `beacon_reindex` from 16.0 s to 158 ms, and the database from 15.2 MB to 7.4 MB. `sample()` works over stdio for the first time in any release.
+
+### Breaking
+
+- **`RecallAPI` gained a required `internal(prefix)` member.** Anyone who implements the interface themselves now fails to typecheck until they add it. Consumers who only *call* the API are unaffected.
+- **`BeaconSearchResponse.timing` gained a required `index_ms` field.** Constructing or exhaustively destructuring that object needs updating; reading `query_ms` and `total_ms` still works. Note `total_ms` now covers index maintenance too, so the same search reports a larger number than it used to — the old figure excluded most of the call.
+- **`serve()` handles requests concurrently**, up to `maxInFlight` (default 16). Responses can complete out of order, correlated by `id`, and a tool can be re-entered while a previous invocation is still running. A tool holding mutable state of its own needs to tolerate that. Pass `maxInFlight: 1` to serialise handlers.
+- **`notifications/tools/progress` carries `params.id`.** Additive on the wire — a client reading `params.text` is unaffected — but a client matching on the exact params shape will see a new key.
+- **`patterns_traverse` no longer returns duplicate edges** with `direction: "both"`. Previously each edge appeared once per endpoint. Code compensating for the duplication will now under-count.
+- **`exports` no longer advertises `./analyzer/lexer` or `./analyzer/tokens`.** Both were parser internals — one function and 141 constants — and neither shipped type declarations, so importing them errored under `strict` anyway. They remain in the package because the parser needs them at runtime.
+- **`os` is now `["darwin", "linux"]`.** npm will refuse to install on Windows. Remove the field if you need it there; nothing in the code is knowingly platform-specific beyond what Bun itself supports.
+
+### Database schema
+
+Existing databases are migrated in place on first load; there is no manual step.
+
+- Recall adds `recall_internal`, and module bookkeeping — scanner hashes and graph slices, prompt's base directory, diff snapshots — moves there out of `recall_data` the first time each module claims its prefix. If you were reading those keys directly, they are no longer in `recall_data` and no longer returned by `recall_query`.
+- Beacon adds `beacon_docs`, mapping document keys to FTS rowids.
+- Recall now opens the database in WAL mode, which means `-wal` and `-shm` files alongside the `.db`. Copying the `.db` on its own can lose committed writes.
+
+### Added
+
+- `ServerOptions.requestTimeout` — deadline for a request the server sends *to* the client, i.e. `sample()`. Default off.
+- `ServerOptions.maxInFlight` — concurrent request handlers, default 16.
+- `RecallAPI.internal(prefix)` — a store for a module's own bookkeeping, invisible to `query()` and to the event bus.
+- `PatternsAPI.deleteNode` / `deleteEdge`, emitting `patterns:nodeRemoved` / `patterns:edgeRemoved`.
+- Docs for the four modules that had none: diff, stats, refactor, prompt. All 25 registered tools are now documented.
+- `bench/audit-criteria.ts`, which reproduces the audit measurements against a directory of your choosing.
+- Tests: 277 to 359.
+
+### Fixed
+
+Highlights; see the per-version sections below for the full list and the reasoning.
+
+- `sample()` could never complete over stdio — the read loop awaited each handler, blocking the stream the reply arrives on. Present in every prior release.
+- Multi-byte characters were corrupted at stdin chunk boundaries, silently, in a line that still parsed as valid JSON.
+- Beacon index writes scanned the whole index on every upsert, making indexing quadratic in corpus size.
+- `beacon.search` reported timings that excluded its own index work — a 9,501 ms call reported 5.24 ms.
+- Module bookkeeping was indexed as searchable content and ranked against real code.
+- `query_find` returned nothing when `search` and `where` were combined.
+- Scanner rescans left stale graph state behind, and import resolution guessed `.ts` without checking the filesystem.
+- `handleRequest` errors thrown outside a tool's own handling sent no response at all.
+
 ## 0.4.6
+
+*Never published to npm — included in 0.5.0.*
 
 Ticket 013. `sample()` now works over the stdio transport, which required making request handling concurrent.
 
@@ -18,6 +67,8 @@ Ticket 013. `sample()` now works over the stdio transport, which required making
 - Tests: sampling over stdio including the `examples/basic.ts` path (4), concurrent handling and the in-flight cap (4), streaming under concurrency (3), reader liveness at capacity (2). 346 tests to 359.
 
 ## 0.4.5
+
+*Never published to npm — included in 0.5.0.*
 
 Correctness pass over tickets 011, 012 and part of 009. No performance claims here — the measurable work landed in 0.4.4.
 
@@ -37,7 +88,9 @@ Correctness pass over tickets 011, 012 and part of 009. No performance claims he
 
 ## 0.4.4
 
-Performance and correctness release from a follow-up audit (`project/audits/2026-08-11-AUDIT-0.4.3-followup.md`), tickets 001–006. Measured on a 1,001-file synthetic project (8,000 nodes, 16,000 edges):
+*Never published to npm — included in 0.5.0.*
+
+Performance and correctness release from the August 2026 follow-up audit, tickets 001–006. Measured on a 1,001-file synthetic project (8,000 nodes, 16,000 edges):
 
 | | 0.4.3 | 0.4.4 |
 |---|---|---|
@@ -68,6 +121,8 @@ Performance and correctness release from a follow-up audit (`project/audits/2026
 - `bench/audit-criteria.ts`, which reproduces the audit's measurements against a directory of your choosing.
 
 ## 0.4.3
+
+*Never published to npm — included in 0.5.0.*
 
 Maintenance release addressing a codebase audit. No new features; the public tool surface is unchanged.
 

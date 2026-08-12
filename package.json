@@ -1,8 +1,11 @@
 {
   "name": "tiny-mcp-server",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "Modular toolkit for building MCP servers on Bun — persistent context graph, incremental code scanning, full-text search, and built-in input validation",
-  "author": "Fredrik Paulin <fredrik@rymdskepp.com>",
+  "author": {
+    "name": "Fredrik Paulin",
+    "email": "fredrik@rymdskepp.com"
+  },
   "license": "MIT",
   "keywords": [
     "mcp",
@@ -13,9 +16,17 @@
     "claude"
   ],
   "type": "module",
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
   "scripts": {
     "test": "bun test test/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun test test/ && tsc --noEmit"
   },
   "main": "src/index.ts",
   "module": "src/index.ts",
@@ -25,29 +36,10 @@
     "./mcp": "./src/mcp.ts",
     "./modules/*": "./src/modules/*.ts",
     "./analyzer/parser": "./src/analyzer/parser.js",
-    "./analyzer/ast": "./src/analyzer/ast.js",
-    "./analyzer/lexer": "./src/analyzer/lexer.js",
-    "./analyzer/tokens": "./src/analyzer/tokens.js"
+    "./analyzer/ast": "./src/analyzer/ast.js"
   },
   "files": [
-    "src/mcp.ts",
-    "src/index.ts",
-    "src/modules/recall.ts",
-    "src/modules/patterns.ts",
-    "src/modules/beacon.ts",
-    "src/modules/scanner.ts",
-    "src/modules/query.ts",
-    "src/modules/export.ts",
-    "src/modules/diff.ts",
-    "src/modules/stats.ts",
-    "src/modules/refactor.ts",
-    "src/modules/prompt.ts",
-    "src/analyzer/parser.js",
-    "src/analyzer/parser.d.ts",
-    "src/analyzer/ast.js",
-    "src/analyzer/ast.d.ts",
-    "src/analyzer/lexer.js",
-    "src/analyzer/tokens.js",
+    "src/",
     "README.md",
     "LICENSE"
   ],
@@ -60,5 +52,10 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   }
 }
