@@ -11,6 +11,8 @@ When you call `sample()`, the server sends a `sampling/createMessage` JSON-RPC r
 - The client can apply its own safety filters and rate limits
 - Sampling only works while `serve()` is running (the stdio transport must be active)
 
+The server keeps reading stdin while your handler waits for the reply, which is what makes this possible at all: before 0.4.6 `serve()` awaited each request inside the read loop, so a handler waiting on a sampling reply blocked the very stream that reply arrived on, and the call could never complete. Set `requestTimeout` on `serve()` if you want a deadline for a client that never answers.
+
 ## Basic Usage
 
 ```ts

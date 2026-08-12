@@ -13,6 +13,8 @@ When a tool handler is an async generator (uses `function*`), the server:
 
 Clients that understand the notifications get live streaming updates. Clients that ignore notifications still receive the complete result in the final response — so this is fully backward compatible.
 
+`params.id` is the id of the `tools/call` request the chunk belongs to. Requests are handled concurrently, so two streaming tools can be in flight at once and their chunks share one channel; filter on `params.id` to reassemble each call's output. Chunks for a given id always arrive in order, and always before that request's final response.
+
 ## Basic Usage
 
 ```ts
@@ -44,9 +46,9 @@ No opt-in flag is needed — using `async function*` instead of `async function`
 Each yielded chunk is sent as a JSON-RPC notification (no `id` field):
 
 ```json
-{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "text": "Once upon a " } }
-{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "text": "time, there was " } }
-{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "text": "a tiny server." } }
+{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "id": 1, "text": "Once upon a " } }
+{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "id": 1, "text": "time, there was " } }
+{ "jsonrpc": "2.0", "method": "notifications/tools/progress", "params": { "id": 1, "text": "a tiny server." } }
 ```
 
 After the generator completes, the normal `tools/call` response is sent:

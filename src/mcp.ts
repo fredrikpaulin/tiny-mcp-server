@@ -109,6 +109,7 @@ interface ServerOptions {
   version?: string;
   toolTimeout?: number; // ms, 0 = no timeout (default)
   requestTimeout?: number; // ms for outgoing requests (sampling), 0 = no timeout (default)
+  maxInFlight?: number; // concurrent request handlers, default 16
 }
 
 let serverInfo = { name: "mcp-server", version: "1.0.0" };
@@ -193,7 +194,7 @@ class JsonRpcError extends Error {
   }
 }
 
-type MethodContext = { params: unknown; write?: (msg: object) => void };
+type MethodContext = { id: number | string; params: unknown; write?: (msg: object) => void };
 type MethodHandler = (ctx: MethodContext) => Promise<unknown> | unknown;
 
 const methods: Record<string, MethodHandler> = {
@@ -260,7 +261,7 @@ const methods: Record<string, MethodHandler> = {
     throw new JsonRpcError(-32601, `Unknown resource: ${uri}`);
   },
 
-  "tools/call": async ({ params, write }) => {
+  "tools/call": async ({ id, params, write }) => {
     const { name, arguments: args } = params as { name: string; arguments: Record<string, unknown> };
     const tool = tools.get(name);
     if (!tool) throw new JsonRpcError(-32601, `Unknown tool: ${name}`);
@@ -280,7 +281,7 @@ const methods: Record<string, MethodHandler> = {
         const chunks: string[] = [];
         for await (const chunk of result as AsyncGenerator<string>) {
           chunks.push(chunk);
-          if (write) write({ jsonrpc: "2.0", method: "notifications/tools/progress", params: { text: chunk } });
+          if (write) write({ jsonrpc: "2.0", method: "notifications/tools/progress", params: { id, text: chunk } });
         }
         return { content: [{ type: "text", text: chunks.join("") }] };
       }
@@ -315,7 +316,7 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
   }
 
   try {
-    return { jsonrpc: "2.0", id, result: await handler({ params, write }) };
+    return { jsonrpc: "2.0", id, result: await handler({ id, params, write }) };
   } catch (e) {
     if (e instanceof JsonRpcError) {
       return { jsonrpc: "2.0", id, error: { code: e.code, message: e.message } };
@@ -475,8 +476,66 @@ export function _reset() {
   serverInfo = { name: "mcp-server", version: "1.0.0" };
   toolTimeout = 0;
   requestTimeout = 0;
+  currentMaxInFlight = 16;
+  queued.length = 0;
   loadedModules.length = 0;
   eventHandlers.clear();
+}
+
+// Requests run concurrently, so a client that pipelines would otherwise start a
+// handler per line. Excess requests queue rather than starting.
+//
+// The reader never waits for a slot. If it did, a client that pipelines past the
+// cap would block the loop, and the sampling reply an in-flight handler is waiting
+// on would never be read — the same deadlock this concurrency exists to remove,
+// only harder to reproduce.
+const inFlight = new Set<Promise<void>>();
+const queued: JsonRpcRequest[] = [];
+let currentMaxInFlight = 16;
+
+function start(req: JsonRpcRequest) {
+  const write = (msg: object) => console.log(JSON.stringify(msg));
+  const task = handleRequest(req, write)
+    .then(res => {
+      if (req.id !== undefined) console.log(JSON.stringify(res));
+    })
+    .catch(e => {
+      // A handler that rejects outside handleRequest's own try/catch would
+      // otherwise become an unhandled rejection and take the process down.
+      log("Handler error:", e);
+      if (req.id !== undefined) {
+        console.log(JSON.stringify({
+          jsonrpc: "2.0",
+          id: req.id,
+          error: { code: -32603, message: e instanceof Error ? e.message : String(e) },
+        }));
+      }
+    })
+    .finally(() => {
+      inFlight.delete(task);
+      pump();
+    });
+
+  inFlight.add(task);
+}
+
+function pump() {
+  while (queued.length > 0 && inFlight.size < currentMaxInFlight) {
+    start(queued.shift()!);
+  }
+}
+
+function dispatch(req: JsonRpcRequest) {
+  queued.push(req);
+  pump();
+}
+
+// Resolves once the queue has drained and every handler has settled.
+async function drain() {
+  while (queued.length > 0 || inFlight.size > 0) {
+    if (inFlight.size === 0) { pump(); continue; }
+    await Promise.allSettled([...inFlight]);
+  }
 }
 
 export async function serve(options: ServerOptions = {}) {
@@ -486,6 +545,7 @@ export async function serve(options: ServerOptions = {}) {
   };
   toolTimeout = options.toolTimeout || 0;
   requestTimeout = options.requestTimeout || 0;
+  currentMaxInFlight = Math.max(1, options.maxInFlight ?? 16);
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -518,16 +578,16 @@ export async function serve(options: ServerOptions = {}) {
           continue;
         }
 
-        // Incoming request
-        const req = msg as JsonRpcRequest;
-        const write = (msg: object) => console.log(JSON.stringify(msg));
-        const res = await handleRequest(req, write);
-        if (req.id !== undefined) {
-          console.log(JSON.stringify(res));
-        }
+        // Incoming request. Deliberately not awaited: a handler that calls
+        // sample() waits for a reply that arrives on this very stream, so
+        // blocking here to await it deadlocks. Dispatch and keep reading.
+        dispatch(msg as JsonRpcRequest);
       } catch (e) {
         log("Parse error:", e);
       }
     }
   }
+
+  // Let queued and in-flight handlers finish before serve() resolves on EOF.
+  await drain();
 }

@@ -173,7 +173,7 @@ See [Input Validation](validation.md) for supported keywords and examples.
 
 Request an LLM completion from the MCP client. This sends a `sampling/createMessage` request over the transport and waits for the client's response. Can only be used after `serve()` is running.
 
-> **Known limitation.** A tool that calls `sample()` cannot currently complete over the stdio transport. `serve()` awaits `handleRequest` inside the loop that reads stdin, so a handler waiting on a sampling reply blocks the stream that reply arrives on. Set `requestTimeout` on `serve()` to fail cleanly rather than hang. Tracked as ticket 013.
+The server keeps reading stdin while a handler waits, so the reply can arrive. Set `requestTimeout` on `serve()` for a deadline if the client may never answer.
 
 ```ts
 import { sample } from "tiny-mcp-server";
@@ -203,6 +203,12 @@ See [Sampling](sampling.md) for usage patterns.
 
 Start the MCP server on stdio. This blocks and reads from stdin indefinitely. Call this after registering all tools and resources.
 
+Requests are handled concurrently, up to `maxInFlight`. The reader never waits for a handler — requests past the cap queue instead — which is what allows a handler to call `sample()` and receive the client's reply.
+
+Two consequences worth knowing. Responses can arrive in a different order than the requests that produced them, correlated by `id` as JSON-RPC intends. And two invocations of the same tool can overlap, so a tool holding mutable state of its own has to tolerate that.
+
+`maxInFlight: 1` runs handlers strictly one at a time while still reading input, so `sample()` keeps working. Values below 1 are clamped to 1.
+
 ```ts
 import { serve } from "tiny-mcp-server";
 
@@ -217,6 +223,7 @@ serve({ name: "my-server", version: "1.0.0" });
 | `options.version` | `string` | `"1.0.0"` | Server version returned in `initialize` response |
 | `options.toolTimeout` | `number` | `0` | Deadline in ms for a tool handler. `0` disables it. |
 | `options.requestTimeout` | `number` | `0` | Deadline in ms for a request the server sends *to* the client, i.e. `sample()`. `0` disables it. |
+| `options.maxInFlight` | `number` | `16` | Request handlers allowed to run concurrently. Further requests wait for a slot. |
 
 Without `requestTimeout`, a client that never answers a `sampling/createMessage` leaves the call pending forever. When it fires, the promise rejects with a `ToolError` coded `request_timeout`.
 

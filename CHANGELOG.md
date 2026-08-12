@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.6
+
+Ticket 013. `sample()` now works over the stdio transport, which required making request handling concurrent.
+
+### Fixed
+- **`sample()` could never complete over stdio.** `serve()` awaited each request inside the loop reading stdin, so a handler waiting on a `sampling/createMessage` reply blocked the very stream that reply arrives on. Guaranteed deadlock, present in every released version. The reader now dispatches without awaiting and keeps reading, so the reply gets through. `examples/basic.ts`'s `summarize` tool works end to end and has a test.
+- **A handler rejecting outside `handleRequest`'s own try/catch sent no response.** A malformed `tools/call` — no `params` at all — threw while destructuring, was logged as a parse error, and left the client waiting forever. Such a request now gets a `-32603` response and the server carries on.
+
+### Changed
+- **Requests are handled concurrently**, up to `ServerOptions.maxInFlight` (default 16). Requests past the cap queue rather than starting, and the reader never waits for a slot — waiting for one would reintroduce the same deadlock for a client that pipelines. Two consequences: responses can complete out of order, correlated by `id` as JSON-RPC intends, and two invocations of the same tool can overlap. `maxInFlight: 1` serialises handlers while still reading input, so sampling keeps working.
+- **`notifications/tools/progress` carries the request id** in `params.id`. Handlers can overlap now, so two streaming tools share one notification channel; without a correlator their chunks are indistinguishable. Additive — a client reading `params.text` is unaffected.
+- `serve()` waits for queued and in-flight handlers to settle before resolving on EOF.
+
+### Added
+- `ServerOptions.maxInFlight`.
+- Tests: sampling over stdio including the `examples/basic.ts` path (4), concurrent handling and the in-flight cap (4), streaming under concurrency (3), reader liveness at capacity (2). 346 tests to 359.
+
 ## 0.4.5
 
 Correctness pass over tickets 011, 012 and part of 009. No performance claims here — the measurable work landed in 0.4.4.
@@ -16,7 +33,7 @@ Correctness pass over tickets 011, 012 and part of 009. No performance claims he
 - Tests: `traverse` edge deduplication (5), outgoing request timeout (5), scanner cache edge-key format (3). 333 tests to 346.
 
 ### Known issues
-- **`sample()` cannot complete over the stdio transport.** `serve()` awaits `handleRequest` inside the stdin read loop, so a handler waiting on a sampling reply blocks the very stream that reply arrives on. Present in every released version, not a regression. `requestTimeout` above converts the hang into a clean error but does not fix it. Tracked as ticket 013.
+- **`sample()` cannot complete over the stdio transport.** Fixed in 0.4.6. `requestTimeout` above converts the hang into a clean error; ticket 013 removed the hang itself.
 
 ## 0.4.4
 
