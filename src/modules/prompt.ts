@@ -6,8 +6,9 @@
  * its callers, and the types/interfaces it references. Then reads the actual
  * source lines and formats them as a compact prompt.
  *
- * Depends on Patterns (graph traversal), Scanner (source dir tracking),
- * and Recall (for caching extracted prompts).
+ * Depends on Patterns (graph traversal) and Recall (for the base-directory cache).
+ * Scanner is not a declared dependency, but this module is only useful alongside
+ * it: it listens for scanner:complete to learn which directory to read from.
  */
 import type { ModuleMetadata, ModuleContext } from "../mcp";
 import type { PatternsAPI, PatternsNode, PatternsEdge } from "./patterns";

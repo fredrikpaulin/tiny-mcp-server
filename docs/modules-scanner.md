@@ -60,6 +60,37 @@ Returns:
 | `dir` | `string` | yes | Directory path to scan |
 | `force` | `boolean` | no | Force rescan of all files, ignoring cache |
 
+### `scanner_watch`
+
+Watch a directory and rescan automatically when a JS/TS file changes.
+
+```json
+{ "dir": "/path/to/project/src", "debounce": 300 }
+// → { "ok": true, "watching": "/path/to/project/src" }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dir` | `string` | yes | Directory to watch |
+| `debounce` | `number` | no | Milliseconds to batch rapid changes (default 300) |
+
+Recursive, and filtered the same way `scanner_scan` is: only `.ts`, `.tsx`, `.js` and `.jsx` changes count, and paths under a skipped directory are ignored. Rapid changes collapse into one rescan after the debounce interval, so saving twenty files at once causes one scan rather than twenty.
+
+Each rescan emits `scanner:watchRescan` with its `ScanResult`, or `scanner:watchError` if it threw. Calling `scanner_watch` again replaces the existing watcher rather than adding a second.
+
+Since 0.4.6 the server handles requests concurrently, so a watch rescan can overlap a `scanner_scan` you triggered yourself. Each file's graph update is a single transaction so nothing tears, but the two scans can interleave — avoid driving both at once against the same directory.
+
+### `scanner_unwatch`
+
+Stop watching. Takes no arguments.
+
+```json
+{}
+// → { "ok": true, "stopped": "/path/to/project/src" }
+```
+
+`stopped` is the directory that was being watched, or `null` if nothing was. Unwatching also happens automatically from the module's `close()` hook, so `closeModules()` cleans up the watcher and any pending debounce timer.
+
 ## What Gets Extracted
 
 ### Node Types
@@ -117,7 +148,11 @@ The scanner uses a hand-written recursive descent parser (ported from skeleton-t
 | Event | Payload | When |
 |-------|---------|------|
 | `scanner:fileScanned` | `{ file, nodes, edges }` | After each file is processed |
-| `scanner:complete` | Full `ScanResult` object | After scan finishes |
+| `scanner:complete` | Full `ScanResult` object | After a scan finishes |
+| `scanner:watchStart` | `{ dir }` | `scanner_watch` begins watching |
+| `scanner:watchStop` | `{ dir }` | `scanner_unwatch`, or `close()` |
+| `scanner:watchRescan` | Full `ScanResult` object | A watch-triggered rescan finished |
+| `scanner:watchError` | `{ error }` | A watch-triggered rescan threw |
 
 ## API for Other Modules
 
@@ -125,7 +160,10 @@ Scanner exposes `ctx.scanner`:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `scan` | `(dir, opts?) => Promise<ScanResult>` | Scan a directory, returns stats |
+| `scan` | `(dir: string, opts?: { force?: boolean }) => Promise<ScanResult>` | Scan a directory, returns stats |
+| `watch` | `(dir: string, opts?: { debounce?: number }) => void` | Start watching for changes |
+| `unwatch` | `() => void` | Stop watching |
+| `watching` | `boolean` (getter) | Whether a watcher is active |
 
 ## Example: Scan and Search
 

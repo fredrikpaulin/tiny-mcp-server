@@ -124,16 +124,24 @@ Convention: prefix event names with the module name (e.g. `recall:set`, `pattern
 |-------|-----------|---------|
 | `recall:set` | Recall | `{ key, value }` |
 | `recall:delete` | Recall | `{ key }` |
+| `patterns:nodeAdded` | Patterns | `{ id, type, name, metadata }` |
+| `patterns:nodeRemoved` | Patterns | `{ id }` |
+| `patterns:edgeAdded` | Patterns | `{ from, to, relationship, metadata }` |
+| `patterns:edgeRemoved` | Patterns | `{ from, to, relationship }` |
+| `patterns:noteAdded` | Patterns | `{ entity, note }` |
+| `scanner:fileScanned` | Scanner | `{ file, nodes, edges }` |
+| `scanner:complete` | Scanner | the full `ScanResult` |
+| `scanner:watchStart` | Scanner | `{ dir }` |
+| `scanner:watchStop` | Scanner | `{ dir }` |
+| `scanner:watchRescan` | Scanner | the `ScanResult` of the rescan |
+| `scanner:watchError` | Scanner | `{ error }` |
+| `modules:ready` | Framework | *(none)* |
 
 Writes through `recall.internal(prefix)` deliberately emit nothing. A module's own bookkeeping is not a data change the rest of the stack should react to — Beacon indexing Scanner's file-hash cache is what that mistake looks like in practice.
-| `patterns:nodeAdded` | Patterns | `{ id, type, name, metadata }` |
-| `patterns:edgeAdded` | Patterns | `{ from, to, relationship, metadata }` |
-| `patterns:noteAdded` | Patterns | `{ entity, note }` |
-| `modules:ready` | Framework | *(none)* |
 
 `modules:ready` fires once after all modules have finished initializing. Use it for work that needs all module APIs to be available — for example, Beacon uses it to build its initial FTS index so it captures any data seeded by other modules during init.
 
-Beacon listens for the data change events above and marks its FTS index as dirty. The index is rebuilt lazily before the next search, so bulk inserts don't trigger repeated reindexing.
+Beacon listens for the data change events above and queues per-document index work, flushed before the next search. So bulk inserts cost one small index update each rather than repeated full rebuilds, and only the next search pays for them. Edge events are ignored, because edges aren't indexed as searchable documents.
 
 ## Error Handling
 

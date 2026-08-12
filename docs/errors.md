@@ -45,6 +45,8 @@ The `code` field is determined by the error type:
 |---|---|---|
 | `ToolError` | Your custom code | Handler throws `new ToolError(code, message)` |
 | Input validation | `"validation_failed"` | Arguments don't match the tool's schema |
+| Tool deadline | `"timeout"` | The handler exceeded `serve({ toolTimeout })` |
+| Client deadline | `"request_timeout"` | A `sample()` call exceeded `serve({ requestTimeout })` |
 | Any other `Error` | `"internal_error"` | Handler throws a plain `Error` or anything else |
 
 Validation errors also include an `errors` array with field-level details:
@@ -74,6 +76,8 @@ Error codes are free-form strings. Here are some conventions that work well:
 | `external_error` | An external service call failed |
 | `validation_failed` | Reserved — used by automatic input validation |
 | `internal_error` | Reserved — used for untyped handler errors |
+| `timeout` | Reserved — used when `toolTimeout` fires |
+| `request_timeout` | Reserved — used when `requestTimeout` fires on a `sample()` call |
 
 ## Patterns
 
@@ -132,6 +136,6 @@ Some errors are returned at the JSON-RPC level (in `response.error` rather than 
 | Code | Meaning |
 |------|---------|
 | `-32601` | Unknown method, unknown tool, or unknown resource |
-| `-32603` | Internal error in resource handler |
+| `-32603` | Internal error in a resource handler, or a request handler that threw before its own error handling could catch it |
 
 Tool handler errors are always returned inside `response.result.content` so the client can distinguish between "the tool ran and reported an error" and "the tool couldn't be found at all".

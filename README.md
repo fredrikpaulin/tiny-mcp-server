@@ -162,6 +162,11 @@ See [Module Framework](docs/modules.md) for the full guide.
 - [Scanner Module](docs/modules-scanner.md) — Directory scanning and code analysis
 - [Query Module](docs/modules-query.md) — Predicate-based graph queries
 - [Export Module](docs/modules-export.md) — DOT and JSON graph export
+- [Diff Module](docs/modules-diff.md) — Snapshot-based graph comparison
+- [Stats Module](docs/modules-stats.md) — Complexity, connectivity and hotspot metrics
+- [Refactor Module](docs/modules-refactor.md) — Reference finding and rename impact
+- [Prompt Builder Module](docs/modules-prompt.md) — Minimal LLM context from the graph
+- [Roadmap](ROADMAP.md) — Shipped work and what's open
 - [AI Agent HOWTO](docs/HOWTO-AI-AGENTS.md) — Step-by-step guide for AI agents implementing a server
 
 ## MCP Client Configuration

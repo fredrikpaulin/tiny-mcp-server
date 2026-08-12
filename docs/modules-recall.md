@@ -86,9 +86,11 @@ ns.delete("config");                    // deletes "mymodule:config"
 Namespaces can be nested:
 
 ```ts
-const deep = ctx.recall.namespace("patterns").namespace("node");
-deep.set("mcp.ts", { type: "file" });  // stored as "patterns:node:mcp.ts"
+const deep = ctx.recall.namespace("mymodule").namespace("session");
+deep.set("last-run", { at: Date.now() });  // stored as "mymodule:session:last-run"
 ```
+
+Note that Patterns does *not* store its graph through this API — it creates its own indexed `patterns_nodes`, `patterns_edges` and `patterns_notes` tables via `db()`. No key prefix is reserved or special-cased, so `patterns:anything` is an ordinary consumer key.
 
 Query results from a namespaced API return keys with the prefix stripped, so downstream code doesn't need to know about the prefix.
 

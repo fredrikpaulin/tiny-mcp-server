@@ -50,7 +50,8 @@ export default function refactor() {
       if (!patterns) throw new Error("Refactor requires Patterns module");
 
       function findRefs(symbol: string): FindRefsResult {
-        // Find the node — try exact match first, then suffix match (name without file prefix)
+        // Find the node — full id first, then exact match on name. Several nodes can
+        // share a name; the first found wins, so callers wanting a specific one pass the id.
         let node = patterns.getNode(symbol);
         if (!node) {
           const all = patterns.query({}) as PatternsNode[];

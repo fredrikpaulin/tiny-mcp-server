@@ -52,7 +52,10 @@ describe("beacon.search timing", () => {
     b.search("alpha");            // drains the queue
 
     const res = b.search("alpha");
-    expect(res.timing.index_ms).toBe(0);
+    // Not toBe(0): index_ms is a rounded measurement, so the empty-queue check
+    // itself occasionally lands on 0.01. Sub-millisecond is the real claim, and it
+    // still catches a warm search that re-indexes.
+    expect(res.timing.index_ms).toBeLessThan(1);
   });
 
   test("the three figures decompose the call", () => {

@@ -1,54 +1,77 @@
 # Roadmap
 
-## Current State (v0.3.0)
+## Current state (v0.4.6)
 
-### Module Framework
-~55 lines added to `mcp.ts`. Provides `loadModules()` with topological dependency sorting, a shared `ModuleContext` for inter-module communication, and `closeModules()` for cleanup. The contract is minimal: a factory function returning `{ name, depends?, init, close? }`. No classes, no DI container, no lifecycle ceremonies.
+Ten modules, all optional and independently loadable. The framework is ~55 lines in
+`mcp.ts`: `loadModules()` with topological dependency sorting, a shared
+`ModuleContext`, and `closeModules()` for cleanup. A module is a factory returning
+`{ name, depends?, init, close? }` — no classes, no container, no lifecycle ceremony.
 
-### Recall
-SQLite persistence layer via `bun:sqlite` with prepared statements. Exposes a simple key-value API — `set`, `get`, `query` (SQL LIKE patterns), `delete`. Everything else stores data through it. Deliberately simple flat key-value store with JSON serialization.
+| Module | What it does |
+|--------|--------------|
+| Recall | SQLite persistence. `recall_data` for the consumer's key-value store, `recall_internal` for module bookkeeping. WAL, prepared statements, `namespace()` and `internal()` views. |
+| Patterns | Context graph in its own indexed tables — `patterns_nodes`, `patterns_edges`, `patterns_notes`. BFS/DFS traversal, shortest path, neighbours, node boost. |
+| Beacon | FTS5 search across graph nodes, notes and recall entries. BM25 with a trigram index for substring matches, boost applied at scoring, incremental per-document indexing. |
+| Scanner | Walks a directory, parses JS/TS, populates the graph. Incremental by content hash, tracks each file's node/edge slice so deletions clean up after themselves. Watch mode. |
+| Query | Predicate filtering over the graph — type, metadata operators, proximity, relationship, text search, sort, limit. |
+| Export | Graph as DOT or JSON, filterable. |
+| Diff | Snapshot-based graph comparison. Detects added, removed and changed nodes and edges by fingerprint. |
+| Stats | Aggregate metrics — complexity, most-connected nodes, hotspots, dependency depth. |
+| Refactor | Find all references to a symbol; preview rename impact. |
+| Prompt | Extracts a minimal subgraph around a focus symbol and reads the relevant source lines into a compact prompt. |
 
-### Patterns
-Context graph with nodes (files, functions, classes), edges (imports, extends, calls), and notes. All persisted via Recall using key conventions like `patterns:node:{id}` and `patterns:edge:{from}:{to}:{rel}`. Queryable by node ID (full context), by type, or by relationship. Holds the map of a project, but currently requires manual population.
+The analyzer under `src/analyzer/` is a hand-written lexer and recursive-descent
+parser for JS/TS. No dependencies.
 
-### Beacon
-Search layer that queries across Recall keys, Patterns nodes, and notes in a single call. Scores results by match quality and returns them sorted. Functional but basic — string matching with a simple scoring heuristic.
+## What shipped since this file last described the plan
 
----
+Most of what the 0.3.0 roadmap listed as future work is now in. Recorded here because
+the gap between plan and outcome is the interesting part:
 
-## Improvements to Existing Modules
+- **Recall namespacing** — shipped in 0.3.0 as `namespace(prefix)`, and 0.4.4 added `internal(prefix)` for module bookkeeping. The original note proposed namespacing to avoid key collisions; the sharper reason turned out to be that bookkeeping in the shared keyspace was being indexed as searchable content.
+- **Patterns indexed storage** — shipped in 0.3.0. The graph never lived in Recall's keyspace in any released version, so the old "Current State" description of `patterns:node:{id}` keys was wrong when it was written.
+- **Graph traversal** — shipped in 0.4.0: `traverse` (BFS/DFS, depth-limited), `shortestPath`, `neighbors`.
+- **Beacon scoring** — shipped in 0.4.0. The plan floated trigram matching or Levenshtein; the answer was FTS5 with BM25 plus a second trigram-tokenized index consulted only when the word index returns few hits.
+- **Scanner** — shipped in 0.4.0, roughly as described, including incremental hashing. Still JS/TS only.
+- **Diff** — shipped in 0.4.0, but not as planned. The roadmap wanted git integration; what exists is snapshot-based graph comparison, which answers "what changed in the graph" without needing a repository at all. Git integration is still open.
+- **Prompt Builder** — shipped in 0.4.0 as described.
 
-### Recall — Namespacing and TTL
-Every module currently shares one flat keyspace, relying on key prefixes (`patterns:node:*`) to avoid collisions. A namespace-per-module approach or a `recall.namespace("patterns")` helper would make this more robust. TTL-based expiry would let modules store transient context (like "files changed in last session") without manual cleanup.
+## Open
 
-### Patterns — Indexed Storage and Graph Traversal
-Two gaps to address:
+### Recall — TTL
+Nothing expires. TTL-based expiry would let a module store genuinely transient
+context — "files changed this session" — without hand-rolling cleanup.
 
-**Indexed storage.** Every query currently scans all keys via SQL LIKE. For a small project that's fine, but for a large codebase with thousands of nodes, moving from Recall's key-value model to actual SQLite tables with proper indexes (a `nodes` table, an `edges` table with indexed `from`/`to`/`relationship` columns) would make queries much faster.
+### Beacon — recency weighting
+`recall_data` carries `updated_at` and scoring ignores it. Weighting recent entries
+would surface currently-relevant context ahead of stale matches. Worth measuring
+against BM25 alone before committing to it.
 
-**Graph traversal.** There's currently no way to ask "what does this file transitively depend on?" or "find all paths between A and B." Adding depth-limited BFS/DFS traversal methods would make the graph useful for understanding architecture.
+### Scanner — languages beyond JS/TS
+The graph format is already language-agnostic: nodes, edges, metadata. What's missing
+is a parser boundary. A pluggable-parser interface, with each parser producing the
+same slice shape, would let Python or Go in without the graph caring.
 
-### Beacon — Better Scoring and Relevance
-The current substring matching misses things like searching "srv" when the node is called "serve." Trigram matching or Levenshtein distance would help. Weighting by recency (using Recall's `updated_at`) would surface recently-relevant context first.
-
----
-
-## New Modules
-
-### Automated Graph Building (patterns-scanner)
-This is the big one. Currently Patterns requires manual `patterns_add_node` calls — an agent has to explicitly build the graph. A scanner module that walks a directory, identifies files, and extracts structure would automate this entirely. For TypeScript/JavaScript that means parsing imports, exports, function signatures, class declarations, and their relationships.
-
-Key features:
-- **Incremental updates** — store file hashes in Recall, compare on scan, only reprocess what changed
-- **Language-agnostic design** — pluggable parsers for TypeScript, Python, Go, Rust, etc. Each parser produces the same node/edge format; the graph doesn't care what language it came from
-
-This is a larger project and likely its own module that depends on Patterns.
+### Scanner — re-entrancy
+Since 0.4.6 the server handles requests concurrently, so two `scanner_scan` calls on
+the same directory can interleave. Each file's update is a synchronous transaction so
+nothing tears, but the hash and slice cache can end up inconsistent. A per-directory
+guard is the likely fix.
 
 ### Context Window
-Track what an agent has looked at in a session — which files were read, which tools were called, what queries were made. This gives you a "working memory" that Beacon can search, so the agent can ask "what was I looking at earlier?" without re-scanning.
+Track what an agent looked at in a session — files read, tools called, queries made —
+as a searchable working memory, so it can ask "what was I looking at earlier?" without
+rescanning. Not started.
 
-### Diff
-Git integration — track what changed between commits, map changes to graph nodes, and answer "what parts of the graph are affected by recent changes?"
+### Protocol conformance for progress
+Streaming uses a bespoke `notifications/tools/progress` with the request id in
+`params.id`. The MCP spec uses `notifications/progress` with a `progressToken` taken
+from the request's `_meta`. Aligning is a wire-format change and wants doing
+deliberately rather than alongside a bug fix.
 
-### Prompt Builder
-Use the graph to build minimal context for LLM calls. Instead of sending an entire file, extract just the relevant subgraph (a function, its dependencies, and its callers) and format it as a compact prompt. This is the real token-saving payoff — giving an agent exactly the context it needs and nothing more.
+### Performance work from the 2026-08-11 audit
+Four tickets remain in `project/tickets/backlog/`, all measured and none urgent —
+duplicate import resolution (007), reading every file to hash it on rescan (008),
+loading the whole edge table for a subgraph walk (009), and hydrating search results
+before slicing them (010). Tickets 008 and 010 have small enough headroom after 0.4.4
+that they may not be worth the change; the tickets say so.
