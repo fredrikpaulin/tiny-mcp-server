@@ -256,3 +256,61 @@ describe("patterns_shortest_path", () => {
     expect(result.length).toBe(2); // a->b->d or a->c->d, both length 2
   });
 });
+
+describe("traverse edge deduplication", () => {
+  beforeEach(async () => {
+    _reset();
+    await loadModules([recall(), patterns()]);
+  });
+
+  test("direction both returns each edge once, not once per endpoint", async () => {
+    await callTool("patterns_add_node", { id: "a", type: "fn", name: "a" });
+    await callTool("patterns_add_node", { id: "b", type: "fn", name: "b" });
+    await callTool("patterns_add_edge", { from: "a", to: "b", relationship: "calls" });
+
+    const result = await callTool("patterns_traverse", { startId: "a", direction: "both" });
+    // Reached from a as outgoing and from b as incoming. Before the fix this was 2.
+    expect(result.edges.length).toBe(1);
+    expect(result.edges[0]).toMatchObject({ from: "a", to: "b", relationship: "calls" });
+    expect(result.nodes.length).toBe(2);
+  });
+
+  test("a cycle does not inflate the edge list", async () => {
+    for (const id of ["a", "b", "c"]) {
+      await callTool("patterns_add_node", { id, type: "fn", name: id });
+    }
+    await callTool("patterns_add_edge", { from: "a", to: "b", relationship: "calls" });
+    await callTool("patterns_add_edge", { from: "b", to: "c", relationship: "calls" });
+    await callTool("patterns_add_edge", { from: "c", to: "a", relationship: "calls" });
+
+    const result = await callTool("patterns_traverse", { startId: "a", direction: "both" });
+    expect(result.edges.length).toBe(3);
+  });
+
+  test("parallel edges with different relationships are both kept", async () => {
+    await callTool("patterns_add_node", { id: "a", type: "fn", name: "a" });
+    await callTool("patterns_add_node", { id: "b", type: "fn", name: "b" });
+    await callTool("patterns_add_edge", { from: "a", to: "b", relationship: "calls" });
+    await callTool("patterns_add_edge", { from: "a", to: "b", relationship: "imports" });
+
+    const result = await callTool("patterns_traverse", { startId: "a", direction: "both" });
+    expect(result.edges.length).toBe(2);
+    expect(result.edges.map((e: any) => e.relationship).sort()).toEqual(["calls", "imports"]);
+  });
+
+  test("outgoing traversal is unaffected", async () => {
+    await buildCallGraph();
+    const result = await callTool("patterns_traverse", { startId: "main", direction: "outgoing" });
+    // main->server->{handler,auth}->db, with db reached twice by two distinct edges.
+    expect(result.edges.length).toBe(5);
+  });
+
+  test("edge metadata survives deduplication", async () => {
+    await callTool("patterns_add_node", { id: "a", type: "fn", name: "a" });
+    await callTool("patterns_add_node", { id: "b", type: "fn", name: "b" });
+    await callTool("patterns_add_edge", { from: "a", to: "b", relationship: "calls", metadata: { isAwait: true } });
+
+    const result = await callTool("patterns_traverse", { startId: "a", direction: "both" });
+    expect(result.edges[0].metadata).toEqual({ isAwait: true });
+  });
+});

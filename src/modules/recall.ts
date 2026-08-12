@@ -11,6 +11,14 @@ export interface RecallAPI {
   query(pattern: string): [string, unknown][];
   delete(key: string): void;
   namespace(prefix: string): RecallAPI;
+  /**
+   * A store for a module's own bookkeeping — scan hashes, graph slices, cached
+   * snapshots. Same shape as `namespace()`, but backed by a separate table:
+   * writes emit no events and never appear in `query()`, so downstream modules
+   * cannot mistake server internals for the consumer's data. Consumers building
+   * a server have no reason to call this.
+   */
+  internal(prefix: string): RecallAPI;
   db(): import("bun:sqlite").Database;
 }
 
@@ -28,8 +36,28 @@ export default function recall(config: { dbPath?: string } = {}) {
 
     init(ctx: ModuleContext) {
       db = new Database(config.dbPath || ":memory:");
+
+      // bun:sqlite applies no PRAGMAs, so a file-backed database opens on
+      // journal_mode=delete and synchronous=FULL. WAL roughly doubles read
+      // throughput; NORMAL is the single largest lever for unbatched writes.
+      // Both are no-ops for :memory:, which has no journal to switch.
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA synchronous = NORMAL");
+
       db.exec(`
         CREATE TABLE IF NOT EXISTS recall_data (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+
+      // Module bookkeeping lives in its own table. Keeping it in recall_data made
+      // it indistinguishable from the consumer's data: it surfaced in query("%")
+      // and, via recall:set, in Beacon's search index.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS recall_internal (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL,
           created_at INTEGER NOT NULL,
@@ -44,6 +72,35 @@ export default function recall(config: { dbPath?: string } = {}) {
         del: db.prepare(`DELETE FROM recall_data WHERE key = ?`),
       };
 
+      const internalStmts = {
+        upsert: db.prepare(`INSERT INTO recall_internal (key, value, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+        get: db.prepare(`SELECT value FROM recall_internal WHERE key = ?`),
+        query: db.prepare(`SELECT key, value FROM recall_internal WHERE key LIKE ? ORDER BY updated_at DESC`),
+        del: db.prepare(`DELETE FROM recall_internal WHERE key = ?`),
+        // Match on an exact prefix rather than LIKE, so a prefix containing % or _
+        // cannot widen the migration into the consumer's own keys.
+        adopt: db.prepare(`INSERT INTO recall_internal (key, value, created_at, updated_at)
+          SELECT key, value, created_at, updated_at FROM recall_data WHERE substr(key, 1, ?) = ?
+          ON CONFLICT(key) DO NOTHING`),
+        release: db.prepare(`DELETE FROM recall_data WHERE substr(key, 1, ?) = ?`),
+      };
+
+      // Databases written before recall_internal existed hold this module's keys
+      // in recall_data. Move them the first time the owning module claims the
+      // prefix, so nothing has to keep a list of which prefixes are internal.
+      // The sweep scans recall_data, so each prefix is claimed once per process.
+      const adopted = new Set<string>();
+      const adopt = db.transaction((marker: string) => {
+        internalStmts.adopt.run(marker.length, marker);
+        internalStmts.release.run(marker.length, marker);
+      });
+
+      function adoptPrefix(prefix: string) {
+        if (adopted.has(prefix)) return;
+        adopted.add(prefix);
+        adopt(`${prefix}:`);
+      }
+
       function makeNamespaced(root: RecallAPI, prefix: string): RecallAPI {
         return {
           set: (key, value) => root.set(`${prefix}:${key}`, value),
@@ -54,7 +111,34 @@ export default function recall(config: { dbPath?: string } = {}) {
           },
           delete: (key) => root.delete(`${prefix}:${key}`),
           namespace: (sub) => makeNamespaced(root, `${prefix}:${sub}`),
+          internal: (sub) => makeInternal(`${prefix}:${sub}`),
           db: () => root.db(),
+        };
+      }
+
+      // Same shape as a namespace, backed by recall_internal. No events, and
+      // invisible to query() on the public store. namespace() on an internal
+      // store stays internal — there is no route back out to recall_data.
+      function makeInternal(prefix: string): RecallAPI {
+        adoptPrefix(prefix);
+        const full = (key: string) => `${prefix}:${key}`;
+        return {
+          set(key, value) {
+            const now = Date.now();
+            internalStmts.upsert.run(full(key), JSON.stringify(value), now, now);
+          },
+          get(key) {
+            const row = internalStmts.get.get(full(key)) as { value: string } | null;
+            return row ? JSON.parse(row.value) : null;
+          },
+          query(pattern) {
+            const rows = internalStmts.query.all(full(pattern)) as { key: string; value: string }[];
+            return rows.map(r => [r.key.slice(prefix.length + 1), JSON.parse(r.value)]);
+          },
+          delete(key) { internalStmts.del.run(full(key)); },
+          namespace: (sub) => makeInternal(`${prefix}:${sub}`),
+          internal: (sub) => makeInternal(`${prefix}:${sub}`),
+          db: () => db,
         };
       }
 
@@ -77,6 +161,7 @@ export default function recall(config: { dbPath?: string } = {}) {
           ctx.emit?.("recall:delete", { key });
         },
         namespace: (prefix) => makeNamespaced(api, prefix),
+        internal: (prefix) => makeInternal(prefix),
         db: () => db,
       };
 

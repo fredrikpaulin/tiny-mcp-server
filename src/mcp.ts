@@ -108,10 +108,12 @@ interface ServerOptions {
   name?: string;
   version?: string;
   toolTimeout?: number; // ms, 0 = no timeout (default)
+  requestTimeout?: number; // ms for outgoing requests (sampling), 0 = no timeout (default)
 }
 
 let serverInfo = { name: "mcp-server", version: "1.0.0" };
 let toolTimeout = 0;
+let requestTimeout = 0;
 
 interface ValidationError { path: string; message: string }
 
@@ -181,115 +183,92 @@ function formatResourceContent(uri: string, mimeType: string, data: string | Uin
   return { uri, mimeType, blob: data.toBase64() };
 }
 
-export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) => void): Promise<JsonRpcResponse> {
-  const { id, method, params } = req;
-
-  if (method === "ping") {
-    return { jsonrpc: "2.0", id, result: {} };
+// Each method returns the `result` payload, or throws JsonRpcError for a protocol
+// error. handleRequest wraps the envelope, so the handlers stay about their method.
+class JsonRpcError extends Error {
+  code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
   }
+}
 
-  if (method === "initialize") {
+type MethodContext = { params: unknown; write?: (msg: object) => void };
+type MethodHandler = (ctx: MethodContext) => Promise<unknown> | unknown;
+
+const methods: Record<string, MethodHandler> = {
+  ping: () => ({}),
+
+  initialize: ({ params }) => {
     const { protocolVersion } = (params || {}) as { protocolVersion?: string };
     return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        protocolVersion: protocolVersion || "2025-11-25",
-        capabilities: { tools: {}, resources: {}, sampling: {} },
-        serverInfo: { name: serverInfo.name, version: serverInfo.version },
-      },
+      protocolVersion: protocolVersion || "2025-11-25",
+      capabilities: { tools: {}, resources: {}, sampling: {} },
+      serverInfo: { name: serverInfo.name, version: serverInfo.version },
     };
-  }
+  },
 
-  if (method === "tools/list") {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        tools: [...tools.entries()].map(([name, { description, schema }]) => ({
-          name,
-          description,
-          inputSchema: schema,
-        })),
-      },
-    };
-  }
+  "tools/list": () => ({
+    tools: [...tools.entries()].map(([name, { description, schema }]) => ({
+      name,
+      description,
+      inputSchema: schema,
+    })),
+  }),
 
-  if (method === "resources/list") {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        resources: [...resources.entries()].map(([uri, { name, description, mimeType }]) => ({
-          uri,
-          name,
-          description,
-          mimeType,
-        })),
-        resourceTemplates: [...resourceTemplates.entries()].map(([uriTemplate, { name, description, mimeType }]) => ({
-          uriTemplate,
-          name,
-          description,
-          mimeType,
-        })),
-      },
-    };
-  }
+  "resources/list": () => ({
+    resources: [...resources.entries()].map(([uri, { name, description, mimeType }]) => ({
+      uri,
+      name,
+      description,
+      mimeType,
+    })),
+    resourceTemplates: [...resourceTemplates.entries()].map(([uriTemplate, { name, description, mimeType }]) => ({
+      uriTemplate,
+      name,
+      description,
+      mimeType,
+    })),
+  }),
 
-  if (method === "resources/read") {
+  "resources/read": async ({ params }) => {
     const { uri } = params as { uri: string };
-    const resource = resources.get(uri);
 
+    const resource = resources.get(uri);
     if (resource) {
       try {
         const data = await resource.handler();
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { contents: [formatResourceContent(uri, resource.mimeType, data)] },
-        };
+        return { contents: [formatResourceContent(uri, resource.mimeType, data)] };
       } catch (e) {
-        return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
+        throw new JsonRpcError(-32603, String(e));
       }
     }
 
     for (const [, template] of resourceTemplates) {
       const match = uri.match(template.pattern);
-      if (match) {
-        const vars: Record<string, string> = {};
-        template.vars.forEach((v, i) => (vars[v] = match[i + 1] ?? ""));
-        try {
-          const data = await template.handler(vars);
-          return {
-            jsonrpc: "2.0",
-            id,
-            result: { contents: [formatResourceContent(uri, template.mimeType, data)] },
-          };
-        } catch (e) {
-          return { jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } };
-        }
+      if (!match) continue;
+      const vars: Record<string, string> = {};
+      template.vars.forEach((v, i) => (vars[v] = match[i + 1] ?? ""));
+      try {
+        const data = await template.handler(vars);
+        return { contents: [formatResourceContent(uri, template.mimeType, data)] };
+      } catch (e) {
+        throw new JsonRpcError(-32603, String(e));
       }
     }
 
-    return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown resource: ${uri}` } };
-  }
+    throw new JsonRpcError(-32601, `Unknown resource: ${uri}`);
+  },
 
-  if (method === "tools/call") {
+  "tools/call": async ({ params, write }) => {
     const { name, arguments: args } = params as { name: string; arguments: Record<string, unknown> };
     const tool = tools.get(name);
-
-    if (!tool) {
-      return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } };
-    }
+    if (!tool) throw new JsonRpcError(-32601, `Unknown tool: ${name}`);
 
     if (tool.validateInput) {
       const errors = validateInput(tool.schema as Record<string, unknown>, args);
       if (errors.length) {
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: JSON.stringify({ isError: true, code: "validation_failed", errors }) }] },
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ isError: true, code: "validation_failed", errors }) }] };
       }
     }
 
@@ -303,11 +282,7 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
           chunks.push(chunk);
           if (write) write({ jsonrpc: "2.0", method: "notifications/tools/progress", params: { text: chunk } });
         }
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: chunks.join("") }] },
-        };
+        return { content: [{ type: "text", text: chunks.join("") }] };
       }
 
       // Regular handler (promise), with optional timeout
@@ -317,11 +292,7 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
             new Promise((_, reject) => setTimeout(() => reject(new ToolError("timeout", `Tool "${name}" timed out after ${toolTimeout}ms`)), toolTimeout)),
           ])
         : await result;
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: { content: [{ type: "text", text: JSON.stringify(resolved) }] },
-      };
+      return { content: [{ type: "text", text: JSON.stringify(resolved) }] };
     } catch (e) {
       const isToolError = e instanceof ToolError;
       const errPayload: Record<string, unknown> = {
@@ -330,25 +301,59 @@ export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) =
         error: e instanceof Error ? e.message : String(e),
       };
       if (e instanceof Error && e.stack && !isToolError) errPayload.stack = e.stack;
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: { content: [{ type: "text", text: JSON.stringify(errPayload) }] },
-      };
+      return { content: [{ type: "text", text: JSON.stringify(errPayload) }] };
     }
+  },
+};
+
+export async function handleRequest(req: JsonRpcRequest, write?: (msg: object) => void): Promise<JsonRpcResponse> {
+  const { id, method, params } = req;
+  const handler = methods[method];
+
+  if (!handler) {
+    return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method: ${method}` } };
   }
 
-  return { jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method: ${method}` } };
+  try {
+    return { jsonrpc: "2.0", id, result: await handler({ params, write }) };
+  } catch (e) {
+    if (e instanceof JsonRpcError) {
+      return { jsonrpc: "2.0", id, error: { code: e.code, message: e.message } };
+    }
+    throw e;
+  }
 }
 
 function log(...args: unknown[]) {
   console.error("[mcp]", ...args);
 }
 
+// Outgoing request. A client that never answers would otherwise leave this
+// promise pending forever and leak its pendingRequests entry, so requestTimeout
+// gives it a deadline. The timer is cleared on the first settle either way, so a
+// prompt response doesn't hold the event loop open.
 function sendRequest(method: string, params: unknown): Promise<unknown> {
   const id = ++requestId;
   return new Promise((resolve, reject) => {
-    pendingRequests.set(id, { resolve, reject });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      pendingRequests.delete(id);
+    };
+
+    pendingRequests.set(id, {
+      resolve: (value: unknown) => { done(); resolve(value); },
+      reject: (error: Error) => { done(); reject(error); },
+    });
+
+    if (requestTimeout > 0) {
+      timer = setTimeout(() => {
+        done();
+        reject(new ToolError("request_timeout", `Request "${method}" timed out after ${requestTimeout}ms`));
+      }, requestTimeout);
+      timer.unref?.();
+    }
+
     console.log(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   });
 }
@@ -469,6 +474,7 @@ export function _reset() {
   requestId = 0;
   serverInfo = { name: "mcp-server", version: "1.0.0" };
   toolTimeout = 0;
+  requestTimeout = 0;
   loadedModules.length = 0;
   eventHandlers.clear();
 }
@@ -479,11 +485,16 @@ export async function serve(options: ServerOptions = {}) {
     version: options.version || "1.0.0",
   };
   toolTimeout = options.toolTimeout || 0;
+  requestTimeout = options.requestTimeout || 0;
   const decoder = new TextDecoder();
   let buffer = "";
 
   for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk);
+    // { stream: true } holds a partial UTF-8 sequence back until its continuation
+    // bytes arrive in the next chunk. Without it a multi-byte character split
+    // across a 256 KiB chunk boundary decodes to U+FFFD, and the damaged line is
+    // still valid JSON, so the corruption never surfaces as an error.
+    buffer += decoder.decode(chunk, { stream: true });
 
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
@@ -497,7 +508,7 @@ export async function serve(options: ServerOptions = {}) {
         if ("result" in msg || "error" in msg) {
           const pending = pendingRequests.get(msg.id);
           if (pending) {
-            pendingRequests.delete(msg.id);
+            // sendRequest's settle wrapper removes the entry and clears its timer.
             if (msg.error) {
               pending.reject(new Error(msg.error.message));
             } else {

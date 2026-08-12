@@ -219,7 +219,10 @@ export default function patterns() {
 
           const visited = new Set<string>();
           const nodeMap = new Map<string, PatternsNode>();
-          const edgeList: PatternsEdge[] = [];
+          // Keyed rather than a plain list: with direction "both", an edge between
+          // two visited nodes is reached once from each endpoint, so a list hands
+          // the caller the same edge twice.
+          const edgeMap = new Map<string, PatternsEdge>();
           let deepest = 0;
 
           function getEdgesDirectional(nodeId: string): { src: string; dst: string; relationship: string; metadata: string | null }[] {
@@ -254,8 +257,8 @@ export default function patterns() {
 
             const edges = getEdgesDirectional(current.id);
             for (const row of edges) {
-              const edge = parseEdge(row);
-              edgeList.push(edge);
+              const key = `${row.src}\0${row.dst}\0${row.relationship}`;
+              if (!edgeMap.has(key)) edgeMap.set(key, parseEdge(row));
               const neighborId = row.src === current.id ? row.dst : row.src;
               if (!visited.has(neighborId)) {
                 visited.add(neighborId);
@@ -266,7 +269,7 @@ export default function patterns() {
             }
           }
 
-          return { nodes: [...nodeMap.values()], edges: edgeList, depth: deepest };
+          return { nodes: [...nodeMap.values()], edges: [...edgeMap.values()], depth: deepest };
         },
 
         shortestPath(fromId, toId, opts = {}) {

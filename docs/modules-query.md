@@ -95,6 +95,16 @@ Operators use nested objects:
 5. **Sort** — by metadata field or score (descending)
 6. **Limit** — cap at max results
 
+Candidates from `search` are normalised to the same shape as candidates from `type` or `near`, so `where`, `sort` and `near` behave identically whichever source produced the node. Beacon returns a different `value` per result type — a graph node for graph hits, the stored value for `recall` hits, `{ entity, notes }` for notes — and Query unpacks each one:
+
+| Result type | `name` | `metadata` |
+|-------------|--------|------------|
+| graph node | node name | the node's own metadata |
+| `recall` | recall key | the stored value, when it is a plain object |
+| `note` | entity ID | none |
+
+Before 0.4.4 the whole Beacon value was assigned to `metadata`, which nested a node's real metadata one level too deep. `{ "search": "handler", "where": { "complexity": { "gt": 5 } } }` returned nothing while the same predicate under `type` worked.
+
 ## API for Other Modules
 
 Query exposes `ctx.query`:
@@ -132,4 +142,9 @@ Search for "validate" in functions:
 Find interfaces that extend something:
 ```json
 { "type": "interface", "where": { "extends": { "exists": true } } }
+```
+
+Text search narrowed by a metadata predicate:
+```json
+{ "search": "handler", "where": { "complexity": { "gt": 5 } }, "sort": "complexity" }
 ```

@@ -5,7 +5,7 @@
  */
 import type { ModuleMetadata, ModuleContext } from "../mcp";
 import type { PatternsAPI, PatternsNode, Direction } from "./patterns";
-import type { BeaconAPI } from "./beacon";
+import type { BeaconAPI, BeaconResult } from "./beacon";
 
 export interface QueryOptions {
   type?: string;
@@ -48,6 +48,37 @@ function matchPredicate(value: unknown, pred: Pred): boolean {
   return true;
 }
 
+// Beacon's `value` is polymorphic by result type: a graph node for graph hits,
+// the stored value for recall hits, and { entity, notes } for notes. Assigning it
+// straight to `metadata` nested a node's metadata one level too deep, so every
+// `where` predicate combined with `search` silently matched nothing.
+function fromBeaconResult(r: BeaconResult): QueryResultItem {
+  if (r.type === "recall") {
+    const value = r.value;
+    return {
+      id: r.key,
+      type: r.type,
+      name: r.key,
+      metadata: typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined,
+    };
+  }
+
+  if (r.type === "note") {
+    const value = r.value as { entity?: string } | null;
+    return { id: r.key, type: r.type, name: value?.entity ?? r.key, metadata: undefined };
+  }
+
+  const node = r.value as PatternsNode | null;
+  return {
+    id: r.key,
+    type: r.type,
+    name: node?.name ?? r.key,
+    metadata: node?.metadata,
+  };
+}
+
 function matchWhere(metadata: Record<string, unknown> | undefined, where: Record<string, unknown>): boolean {
   for (const [key, constraint] of Object.entries(where)) {
     const value = metadata?.[key];
@@ -83,13 +114,7 @@ export default function query() {
           });
           candidates = new Map();
           for (const r of res.results) {
-            candidates.set(r.key, {
-              id: r.key,
-              type: r.type,
-              name: r.key,
-              metadata: typeof r.value === "object" && r.value !== null ? (r.value as Record<string, unknown>) : undefined,
-              score: r.score,
-            });
+            candidates.set(r.key, { ...fromBeaconResult(r), score: r.score });
           }
         }
 

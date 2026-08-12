@@ -114,6 +114,8 @@ Returns:
 | `maxDepth` | `integer` | no | Max hops (default: 10, max: 50) |
 | `mode` | `string` | no | `"bfs"` (default) or `"dfs"` |
 
+Each edge appears once in the result, keyed on source, target and relationship. With `direction: "both"` an edge is reachable from either endpoint, and before 0.4.5 that returned it twice. Parallel edges between the same two nodes with different relationships are distinct and both returned.
+
 ### `patterns_shortest_path`
 
 Find the shortest path between two nodes via BFS.

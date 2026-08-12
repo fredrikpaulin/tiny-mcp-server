@@ -124,6 +124,8 @@ Convention: prefix event names with the module name (e.g. `recall:set`, `pattern
 |-------|-----------|---------|
 | `recall:set` | Recall | `{ key, value }` |
 | `recall:delete` | Recall | `{ key }` |
+
+Writes through `recall.internal(prefix)` deliberately emit nothing. A module's own bookkeeping is not a data change the rest of the stack should react to — Beacon indexing Scanner's file-hash cache is what that mistake looks like in practice.
 | `patterns:nodeAdded` | Patterns | `{ id, type, name, metadata }` |
 | `patterns:edgeAdded` | Patterns | `{ from, to, relationship, metadata }` |
 | `patterns:noteAdded` | Patterns | `{ entity, note }` |

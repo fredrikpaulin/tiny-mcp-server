@@ -73,7 +73,7 @@ export default function prompt() {
       const recall = ctx.recall as RecallAPI;
       if (!patterns || !recall) throw new Error("Prompt requires Patterns and Recall modules");
 
-      const cache = recall.namespace("prompt");
+      const cache = recall.internal("prompt");
 
       // Read source lines from a file
       async function readLines(filePath: string, start: number, end: number, contextLines: number): Promise<string> {

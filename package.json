@@ -1,6 +1,6 @@
 {
   "name": "tiny-mcp-server",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "description": "Modular toolkit for building MCP servers on Bun — persistent context graph, incremental code scanning, full-text search, and built-in input validation",
   "author": "Fredrik Paulin <fredrik@rymdskepp.com>",
   "license": "MIT",

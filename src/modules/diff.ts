@@ -44,7 +44,7 @@ export default function diff() {
       const exportApi = ctx.export as ExportAPI;
       if (!recall || !exportApi) throw new Error("Diff requires Recall and Export modules");
 
-      const store = recall.namespace("diff");
+      const store = recall.internal("diff");
 
       function snapshot(name = "latest"): Snapshot {
         const { nodes, edges } = exportApi.toJSON({ includeMetadata: true });

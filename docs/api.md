@@ -173,6 +173,8 @@ See [Input Validation](validation.md) for supported keywords and examples.
 
 Request an LLM completion from the MCP client. This sends a `sampling/createMessage` request over the transport and waits for the client's response. Can only be used after `serve()` is running.
 
+> **Known limitation.** A tool that calls `sample()` cannot currently complete over the stdio transport. `serve()` awaits `handleRequest` inside the loop that reads stdin, so a handler waiting on a sampling reply blocks the stream that reply arrives on. Set `requestTimeout` on `serve()` to fail cleanly rather than hang. Tracked as ticket 013.
+
 ```ts
 import { sample } from "tiny-mcp-server";
 
@@ -213,6 +215,10 @@ serve({ name: "my-server", version: "1.0.0" });
 |-------|------|---------|-------------|
 | `options.name` | `string` | `"mcp-server"` | Server name returned in `initialize` response |
 | `options.version` | `string` | `"1.0.0"` | Server version returned in `initialize` response |
+| `options.toolTimeout` | `number` | `0` | Deadline in ms for a tool handler. `0` disables it. |
+| `options.requestTimeout` | `number` | `0` | Deadline in ms for a request the server sends *to* the client, i.e. `sample()`. `0` disables it. |
+
+Without `requestTimeout`, a client that never answers a `sampling/createMessage` leaves the call pending forever. When it fires, the promise rejects with a `ToolError` coded `request_timeout`.
 
 ## handleRequest(req, write?)
 

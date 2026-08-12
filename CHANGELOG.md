@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.4.5
+
+Correctness pass over tickets 011, 012 and part of 009. No performance claims here — the measurable work landed in 0.4.4.
+
+### Fixed
+- **`patterns_traverse` returned duplicate edges.** With `direction: "both"`, an edge between two visited nodes was collected once from each endpoint, so callers got every edge twice. Edges are now keyed on source, target and relationship. Parallel edges with different relationships are still returned separately.
+- **Outgoing requests could never settle.** `sendRequest` had no deadline, so a client that never answered a `sampling/createMessage` left the promise pending forever and leaked its `pendingRequests` entry — one per attempt. `ServerOptions.requestTimeout` gives it a deadline, rejecting with a `ToolError` coded `request_timeout`. Default off, matching `toolTimeout`. The timer is cleared on the first settle and unrefs itself, so it never holds the process open.
+- **`scanner.ts` contained a raw NUL byte.** `EDGE_SEP` was written as a literal control character rather than `"\0"`, which made the file binary to `grep`, `rg` and `git diff` — a search across `src/` silently skipped the largest module in the project. Same value, same cache format, no behavioural change.
+
+### Changed
+- `handleRequest` dispatches through a method table instead of seven sequential `if (method === ...)` blocks. Behaviour is identical, including error codes for unknown methods and unknown tools.
+
+### Added
+- Tests: `traverse` edge deduplication (5), outgoing request timeout (5), scanner cache edge-key format (3). 333 tests to 346.
+
+### Known issues
+- **`sample()` cannot complete over the stdio transport.** `serve()` awaits `handleRequest` inside the stdin read loop, so a handler waiting on a sampling reply blocks the very stream that reply arrives on. Present in every released version, not a regression. `requestTimeout` above converts the hang into a clean error but does not fix it. Tracked as ticket 013.
+
+## 0.4.4
+
+Performance and correctness release from a follow-up audit (`project/audits/2026-08-11-AUDIT-0.4.3-followup.md`), tickets 001–006. Measured on a 1,001-file synthetic project (8,000 nodes, 16,000 edges):
+
+| | 0.4.3 | 0.4.4 |
+|---|---|---|
+| First `beacon_search` after a scan | 45,608 ms | 93 ms |
+| `beacon_reindex` | 16,046 ms | 158 ms |
+| Cold `scanner_scan` | 2,188 ms | 1,180 ms |
+| Warm `beacon_search` | 11 ms | 1.5 ms |
+| Database size | 15.2 MB | 7.4 MB |
+
+### Fixed
+- **Multi-byte characters were corrupted at stdin chunk boundaries.** `serve()` decoded each chunk as a complete stream, so a UTF-8 sequence split across a 256 KiB read decoded to U+FFFD — `Pålin` arrived as `P��lin`. The damaged line was still valid JSON, so nothing raised an error. `TextDecoder` now decodes with `{ stream: true }`.
+- **`query_find` returned nothing when `search` and `where` were combined.** Beacon's result `value` is polymorphic by type, and the whole value was being assigned to `metadata`, nesting a node's real metadata one level too deep. Every predicate then compared against `undefined`. `{ search: "handler", where: { complexity: { gt: 5 } } }` returned 0 results where the same predicate under `type` returned 5. Candidates from the search branch are now normalised per result type, which also fixes `name` carrying the node id instead of the node name.
+- **Beacon index writes scanned the whole index.** `key` is `UNINDEXED` in both FTS tables, so `DELETE ... WHERE key = ?` was a full scan: every upsert cost O(documents) and a flush O(documents²) — 223 µs/doc at 500 documents, 1,465 µs/doc at 4,000. A `beacon_docs` table maps each key to a rowid and deletes address the rowid, which is flat at 13 µs/doc.
+- **`beacon.search` reported timings that excluded its own work.** The clock started after `ensureIndexed()` and `flush()`, so a 9,501 ms call reported `total_ms: 5.24`. `total_ms` now covers the whole call and a new `index_ms` field reports index maintenance separately.
+- **Module bookkeeping was indexed as searchable content.** Scanner's file hashes and graph slices went through `recall.namespace()`, which emits `recall:set`, which Beacon indexes. On a 301-file project that was 602 of 3,605 indexed documents and every byte of indexed description text, ranking against real code — a search for `handler7` returned `scanner:slice:m7.ts` as its second hit. It also meant `recall_query` with pattern `%` handed the consumer server internals mixed in with their own data.
+- **`reindex()` fetched every node twice.** `patterns.query({})` already returns parsed nodes with metadata; the rebuild loop called `getNode` again for each one.
+- **`reindex()` leaked a prepared statement per call** by preparing its notes query inline instead of holding it.
+
+### Changed
+- **Recall runs in WAL with `synchronous = NORMAL`.** `bun:sqlite` sets no PRAGMAs, so a file-backed database was on `journal_mode = delete` and `synchronous = FULL`. Note that WAL leaves `-wal` and `-shm` files beside the database; copying the `.db` alone can lose committed writes.
+- **Beacon batches index writes.** `flush()` and `reindex()` each run in a `db.transaction()` instead of committing per statement. The empty-queue check stays outside, so an idle search opens no transaction.
+- Beacon no longer skips keys prefixed `patterns:`. Nothing ever wrote them — Patterns uses its own tables — so the filter only served to silently drop a consumer key that happened to share the prefix.
+
+### Added
+- **`RecallAPI.internal(prefix)`** — same shape as `namespace(prefix)`, backed by a separate `recall_internal` table. Writes emit no events and never appear in `query()`. Scanner, Prompt and Diff use it for their bookkeeping. Databases written by earlier versions have their bookkeeping rows moved out of `recall_data` the first time the owning module claims its prefix, so no migration step is needed.
+- `BeaconSearchResponse.timing.index_ms`.
+- Tests: stdin chunk-boundary encoding (5), SQLite configuration and write batching (5), Beacon rowid mapping including a scaling assertion (8), search timing decomposition (6), `recall.internal` isolation and migration (10), `query_find` search filters (10). 289 tests to 333.
+- `bench/audit-criteria.ts`, which reproduces the audit's measurements against a directory of your choosing.
+
 ## 0.4.3
 
 Maintenance release addressing a codebase audit. No new features; the public tool surface is unchanged.

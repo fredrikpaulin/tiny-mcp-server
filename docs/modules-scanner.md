@@ -98,9 +98,9 @@ The scanner resolves calls across files by matching the callee name against impo
 
 ## Incremental Scanning
 
-Scanner stores a hash of each file's contents in Recall (namespaced under `scanner:hash:{path}`). On subsequent scans, files with matching hashes are skipped. Use `force: true` to override.
+Scanner stores a hash of each file's contents via `recall.internal("scanner")`, under `hash:{path}`. On subsequent scans, files with matching hashes are skipped. Use `force: true` to override. Because this is an internal store rather than a namespace, the cache emits no `recall:set` events and does not appear in `recall_query` results or in Beacon's search index.
 
-Alongside the hash, the scanner stores the set of node and edge IDs each file produced (`scanner:slice:{path}`). When a file is reparsed, the scanner upserts the new slice and then deletes whatever the previous slice contained but the new one doesn't — so removing a function, class, or import drops the corresponding nodes and edges instead of leaving them behind. User-set node `boost` survives because surviving nodes are upserted, not deleted and recreated. Files that have a cached slice but were not seen during the scan are treated as deleted and their slice is removed entirely (counted in `removed`). Each file's update runs inside a SQLite transaction.
+Alongside the hash, the scanner stores the set of node and edge IDs each file produced (`slice:{path}` in the same internal store). When a file is reparsed, the scanner upserts the new slice and then deletes whatever the previous slice contained but the new one doesn't — so removing a function, class, or import drops the corresponding nodes and edges instead of leaving them behind. User-set node `boost` survives because surviving nodes are upserted, not deleted and recreated. Files that have a cached slice but were not seen during the scan are treated as deleted and their slice is removed entirely (counted in `removed`). Each file's update runs inside a SQLite transaction.
 
 This relies on rescanning the same root directory; the cache is keyed by paths relative to the scanned directory.
 

@@ -45,7 +45,7 @@ Returns scored results with timing telemetry:
     { "type": "recall", "key": "server-config", "value": {...}, "score": 42, "matched_fields": ["title", "description"] }
   ],
   "count": 2,
-  "timing": { "query_ms": 0.12, "total_ms": 0.45 }
+  "timing": { "query_ms": 0.12, "index_ms": 0, "total_ms": 0.45 }
 }
 ```
 
@@ -54,6 +54,16 @@ Returns scored results with timing telemetry:
 | `query` | `string` | yes | Search text (min 1 char) |
 | `maxResults` | `integer` | no | Override default max (1–100) |
 | `types` | `string[]` | no | Filter by result type |
+
+The three timing figures decompose the call:
+
+| Field | Covers |
+|-------|--------|
+| `index_ms` | Building or flushing the index before the query ran. Zero on a warm search. |
+| `query_ms` | Time in the FTS5 and trigram statements. |
+| `total_ms` | The whole call, index maintenance included. |
+
+`total_ms` is measured from the first line of `search()`, so a search that pays for a large flush reports it. Earlier versions started the clock after the flush, which reported a 9.5 s call as 5 ms.
 
 ### `beacon_reindex`
 
@@ -88,7 +98,7 @@ Queries are sanitized before hitting FTS5 to prevent syntax errors:
 
 ## Indexing
 
-The FTS index is built at module initialization and automatically stays fresh via event hooks. When data changes in Recall or Patterns, Beacon marks its index as dirty and rebuilds lazily before the next search. This means bulk inserts don't trigger repeated reindexing — only the next search pays the cost. Three data sources are indexed:
+The FTS index is built at module initialization and automatically stays fresh via event hooks. When data changes in Recall or Patterns, Beacon queues per-document work and flushes it before the next search. This means bulk inserts don't trigger repeated reindexing — only the next search pays the cost. Three data sources are indexed:
 
 | Source | Type field | Key field | Title | Description |
 |--------|-----------|-----------|-------|-------------|
@@ -96,7 +106,9 @@ The FTS index is built at module initialization and automatically stays fresh vi
 | Notes | `note` | `note:{entity}` | entity ID | note text |
 | Recall entries | `recall` | recall key | recall key | JSON-stringified value |
 
-Patterns internal keys (prefixed `patterns:`) are skipped since their data is already indexed via the nodes source.
+Module bookkeeping is not indexed. Modules keep their own state in `recall.internal()`, which is backed by a separate table that `recall.query()` does not see — so Scanner's file hashes and graph slices never reach the index. Nothing is filtered by key prefix, which means a consumer key that happens to start with `patterns:` is indexed like any other.
+
+Each indexed document gets a rowid in a `beacon_docs` table, and index deletes address that rowid. `key` is declared `UNINDEXED` in both FTS tables, so filtering on it scans the whole index — which made every upsert O(documents) and a full flush O(documents²). Indexing 1,000 files went from 45.6 s to under 100 ms on that change plus batching the writes into a transaction.
 
 ## Boost
 

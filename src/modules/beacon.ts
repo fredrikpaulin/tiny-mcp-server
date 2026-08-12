@@ -6,7 +6,7 @@
  */
 import type { ModuleMetadata, ModuleContext } from "../mcp";
 import type { RecallAPI } from "./recall";
-import type { PatternsAPI } from "./patterns";
+import type { PatternsAPI, PatternsNode } from "./patterns";
 
 export interface BeaconResult {
   type: string;
@@ -24,7 +24,14 @@ export interface BeaconSearchOpts {
 export interface BeaconSearchResponse {
   results: BeaconResult[];
   count: number;
-  timing: { query_ms: number; total_ms: number };
+  timing: {
+    /** Time in the FTS5 and trigram statements. */
+    query_ms: number;
+    /** Time spent building or flushing the index before the query ran. */
+    index_ms: number;
+    /** The whole call, index maintenance included. */
+    total_ms: number;
+  };
 }
 
 export interface BeaconAPI {
@@ -81,13 +88,29 @@ export default function beacon(config: { maxResults?: number } = {}) {
         );
       `);
 
+      // Key to rowid map. `key` is UNINDEXED in both FTS tables, which means
+      // there is no index on it, so `DELETE ... WHERE key = ?` scans the whole
+      // index — making every upsert O(docs) and a full flush O(docs²). Deleting
+      // by rowid is a point lookup, so this table is what keeps indexing linear.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS beacon_docs (
+          key TEXT PRIMARY KEY,
+          rid INTEGER NOT NULL
+        );
+      `);
+
       const stmts = {
         clearFts: db.prepare(`DELETE FROM beacon_fts`),
         clearTri: db.prepare(`DELETE FROM beacon_tri`),
-        insertFts: db.prepare(`INSERT INTO beacon_fts (key, type, title, description) VALUES (?, ?, ?, ?)`),
-        insertTri: db.prepare(`INSERT INTO beacon_tri (key, type, title, description) VALUES (?, ?, ?, ?)`),
-        deleteFtsByKey: db.prepare(`DELETE FROM beacon_fts WHERE key = ?`),
-        deleteTriByKey: db.prepare(`DELETE FROM beacon_tri WHERE key = ?`),
+        clearDocs: db.prepare(`DELETE FROM beacon_docs`),
+        insertFts: db.prepare(`INSERT INTO beacon_fts (rowid, key, type, title, description) VALUES (?, ?, ?, ?, ?)`),
+        insertTri: db.prepare(`INSERT INTO beacon_tri (rowid, key, type, title, description) VALUES (?, ?, ?, ?, ?)`),
+        deleteFtsByRid: db.prepare(`DELETE FROM beacon_fts WHERE rowid = ?`),
+        deleteTriByRid: db.prepare(`DELETE FROM beacon_tri WHERE rowid = ?`),
+        ridForKey: db.prepare(`SELECT rid FROM beacon_docs WHERE key = ?`),
+        maxRid: db.prepare(`SELECT coalesce(max(rid), 0) AS m FROM beacon_docs`),
+        mapKey: db.prepare(`INSERT INTO beacon_docs (key, rid) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET rid = excluded.rid`),
+        unmapKey: db.prepare(`DELETE FROM beacon_docs WHERE key = ?`),
         searchFts: db.prepare(`
           SELECT key, type, (-rank) as fts_score,
             highlight(beacon_fts, 2, '<mark>', '</mark>') as title_hl,
@@ -107,20 +130,43 @@ export default function beacon(config: { maxResults?: number } = {}) {
           LIMIT 100
         `),
         getNodeBoost: db.prepare(`SELECT boost FROM patterns_nodes WHERE id = ?`),
+        allNotes: db.prepare(`SELECT entity, text FROM patterns_notes`),
       };
 
+      // Continues from whatever the database already holds, so rowids stay stable
+      // across restarts and a reopened index does not collide with itself.
+      let nextRid = (stmts.maxRid.get() as { m: number }).m + 1;
+
+      function ridFor(key: string): number {
+        const row = stmts.ridForKey.get(key) as { rid: number } | null;
+        if (row) return row.rid;
+        const rid = nextRid++;
+        stmts.mapKey.run(key, rid);
+        return rid;
+      }
+
       function indexDoc(key: string, type: string, title: string, desc: string) {
-        stmts.insertFts.run(key, type, title, desc);
-        stmts.insertTri.run(key, type, title, desc);
+        const rid = ridFor(key);
+        stmts.insertFts.run(rid, key, type, title, desc);
+        stmts.insertTri.run(rid, key, type, title, desc);
       }
 
       function removeDoc(key: string) {
-        stmts.deleteFtsByKey.run(key);
-        stmts.deleteTriByKey.run(key);
+        const row = stmts.ridForKey.get(key) as { rid: number } | null;
+        if (!row) return;
+        stmts.deleteFtsByRid.run(row.rid);
+        stmts.deleteTriByRid.run(row.rid);
+        stmts.unmapKey.run(key);
       }
 
+      // Keeps the key's rowid so the map does not churn, and so a re-index of an
+      // existing document replaces its rows instead of adding a second copy.
       function upsertDoc(key: string, type: string, title: string, desc: string) {
-        removeDoc(key);
+        const row = stmts.ridForKey.get(key) as { rid: number } | null;
+        if (row) {
+          stmts.deleteFtsByRid.run(row.rid);
+          stmts.deleteTriByRid.run(row.rid);
+        }
         indexDoc(key, type, title, desc);
       }
 
@@ -130,21 +176,29 @@ export default function beacon(config: { maxResults?: number } = {}) {
 
       // Full rebuild — used for the initial build (captures persisted data that
       // never fired an event) and for explicit repair via beacon_reindex.
-      function reindex() {
+      // One transaction: a rebuild is thousands of index writes, and outside a
+      // transaction each one commits and fsyncs on its own.
+      const rebuild = db.transaction(() => {
         stmts.clearFts.run();
         stmts.clearTri.run();
+        stmts.clearDocs.run();
+        nextRid = 1;
 
-        const nodes = patterns.query({}) as { id: string; type: string; name: string }[];
+        // query({}) already returns parsed nodes with metadata, so there is no
+        // need to fetch each node a second time.
+        const nodes = patterns.query({}) as PatternsNode[];
         for (const node of nodes) {
-          const meta = patterns.getNode(node.id)?.metadata;
+          const meta = node.metadata;
           indexDoc(node.id, node.type, node.name, meta?.description ? String(meta.description) : "");
         }
 
-        const noteRows = db.prepare(`SELECT entity, text FROM patterns_notes`).all() as { entity: string; text: string }[];
-        for (const n of noteRows) indexDoc(`note:${n.entity}`, "note", n.entity, n.text);
+        for (const n of stmts.allNotes.all() as { entity: string; text: string }[]) {
+          indexDoc(`note:${n.entity}`, "note", n.entity, n.text);
+        }
 
+        // recall.query() covers only the public store — module bookkeeping lives
+        // in recall_internal and is deliberately not searchable.
         for (const [key, value] of recall.query("%")) {
-          if (key.startsWith("patterns:")) continue; // pattern nodes indexed above
           indexDoc(key, "recall", key, recallDesc(value));
         }
 
@@ -152,7 +206,9 @@ export default function beacon(config: { maxResults?: number } = {}) {
         pendingUpserts.clear();
         pendingDeletes.clear();
         pendingNotes.clear();
-      }
+      });
+
+      function reindex() { rebuild(); }
 
       // Incremental indexing. Mutations accumulate as pending work and are
       // flushed (per-document upsert/delete) before the next search, so one
@@ -164,8 +220,7 @@ export default function beacon(config: { maxResults?: number } = {}) {
 
       function ensureIndexed() { if (!indexed) reindex(); }
 
-      function flush() {
-        if (!pendingDeletes.size && !pendingUpserts.size && !pendingNotes.size) return;
+      const applyPending = db.transaction(() => {
         for (const key of pendingDeletes) removeDoc(key);
         for (const [key, d] of pendingUpserts) upsertDoc(key, d.type, d.title, d.desc);
         for (const entity of pendingNotes) {
@@ -175,6 +230,14 @@ export default function beacon(config: { maxResults?: number } = {}) {
         pendingDeletes.clear();
         pendingUpserts.clear();
         pendingNotes.clear();
+      });
+
+      // The empty check stays outside the transaction so an idle search does not
+      // open one. Nested transaction() calls become SAVEPOINTs, so this is safe
+      // when scanner.applySlice is already holding one.
+      function flush() {
+        if (!pendingDeletes.size && !pendingUpserts.size && !pendingNotes.size) return;
+        applyPending();
       }
 
       // Build the index once modules are ready (captures data seeded during init)
@@ -196,7 +259,7 @@ export default function beacon(config: { maxResults?: number } = {}) {
         pendingNotes.add(p.entity);
       });
       ctx.on("recall:set", (p: any) => {
-        if (!indexed || typeof p.key !== "string" || p.key.startsWith("patterns:")) return;
+        if (!indexed || typeof p.key !== "string") return;
         pendingDeletes.delete(p.key);
         pendingUpserts.set(p.key, { type: "recall", title: p.key, desc: recallDesc(p.value) });
       });
@@ -208,14 +271,21 @@ export default function beacon(config: { maxResults?: number } = {}) {
 
       const api: BeaconAPI = {
         search(query, opts) {
+          // t0 goes first. Index maintenance is part of what the call costs, and
+          // timing it from after the flush reported a 9.5 s search as 5 ms.
+          const t0 = performance.now();
           ensureIndexed();
           flush();
-          const t0 = performance.now();
+          const tIndex = performance.now();
+
           const max = opts?.maxResults || maxDefault;
           const types = opts?.types;
           const sanitized = sanitize(query);
+          const index_ms = Math.round((tIndex - t0) * 100) / 100;
 
-          if (!sanitized) return { results: [], count: 0, timing: { query_ms: 0, total_ms: 0 } };
+          if (!sanitized) {
+            return { results: [], count: 0, timing: { query_ms: 0, index_ms, total_ms: index_ms } };
+          }
 
           // Stage 1: FTS5 primary search
           const tq0 = performance.now();
@@ -280,7 +350,11 @@ export default function beacon(config: { maxResults?: number } = {}) {
           return {
             results: sliced,
             count: sliced.length,
-            timing: { query_ms: Math.round((tq1 - tq0) * 100) / 100, total_ms: Math.round((t1 - t0) * 100) / 100 },
+            timing: {
+              query_ms: Math.round((tq1 - tq0) * 100) / 100,
+              index_ms,
+              total_ms: Math.round((t1 - t0) * 100) / 100,
+            },
           };
         },
 
